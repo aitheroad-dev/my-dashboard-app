@@ -52,7 +52,7 @@ A non-technical person clicks one "Deploy to Cloudflare" button, authorizes once
 - **Auth:** CF Access (humans) — verify the signed `Cf-Access-Jwt-Assertion` via team JWKS, **never trust a spoofable header**; scoped per-fork bearer for the agent/MCP seam.
 - **Data layer:** TanStack Query → Hono `/api/*` → `getDb(env)` tagged-template over D1. No Refine.
 - **Config:** single `settings` row (versioned JSON, Zod-validated, every field `.default()`, embedded `schemaVersion` + lazy `migrateConfig`).
-- **Toolchain:** **bun** for install/scripts (never npm/npx). **Deploy must run under node**, not bun — `wrangler deploy` hangs mid-upload under bun on this Mac; use `/opt/homebrew/bin/node ./node_modules/wrangler/bin/wrangler.js deploy` wrapped in `script -q /dev/null`, no stdout redirect, no pipe. CF account `a28d6c975f2cf4e25fb2acb10bf4627e`.
+- **Toolchain:** **bun** for install/scripts (never npm/npx). **Deploy must run under node**, not bun — `wrangler deploy` hangs mid-upload under bun on this Mac; use `/opt/homebrew/bin/node ./node_modules/wrangler/bin/wrangler.js deploy` wrapped in `script -q /dev/null`, no stdout redirect, no pipe. CF account ID stored locally (`~/.config/cloudflare/`), not committed — this repo is public.
 
 ## Goal
 
