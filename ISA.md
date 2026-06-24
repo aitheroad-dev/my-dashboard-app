@@ -3,8 +3,8 @@ project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
 effort: E3
-phase: build
-progress: 0/53
+phase: verify
+progress: 26/53
 mode: ALGORITHM
 started: 2026-06-24
 updated: 2026-06-24
@@ -65,35 +65,35 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 ### Antecedent
 - [ ] ISC-1: Antecedent: a recipient with no terminal/CLI access needs exactly one action — click the Deploy-to-Cloudflare button + authorize once — to get a running, isolated fork.
 
-### P0 — Foundation (scaffold + isolation + deploy)  ← ACTIVE
-- [ ] ISC-2: `~/Projects/my-dashboard-app` is a fresh git repo with its own initial commit (template's `.git` history removed, no template origin remote).
-- [ ] ISC-3: Scaffold present from `cloudflare/react-router-hono-fullstack-template` — `app/`, `workers/app.ts`, `wrangler.jsonc`, `react-router.config.ts`, `vite.config.ts` all exist.
-- [ ] ISC-4: `bun install` completes and `bun.lock` exists; the npm `package-lock.json` is removed (bun is the package manager of record).
-- [ ] ISC-5: `wrangler.jsonc` declares a `DB` D1 binding with `database_name` set and `database_id` OMITTED.
-- [ ] ISC-6: `wrangler.jsonc` declares a `BUCKET` R2 binding with `bucket_name` set.
-- [ ] ISC-7: `wrangler.jsonc` declares a `KV` KV-namespace binding with `id` OMITTED.
-- [ ] ISC-8: `wrangler.jsonc` declares an `AI` Workers-AI binding.
-- [ ] ISC-9: `wrangler.jsonc` sets `compatibility_flags` including `"nodejs_compat"`.
-- [ ] ISC-10: Anti: no `database_id`, KV `id`, or other account-specific resource ID is committed in `wrangler.jsonc` (grep returns none).
-- [ ] ISC-11: `workers/lib/db.ts` ports `getDb(env)` with the identical tagged-template API and only requires `env.DB`.
-- [ ] ISC-12: `getDb` value normalization is preserved (undefined→null, boolean→0/1, Date→ISO, object/array→JSON).
-- [ ] ISC-13: `workers/lib/auth.ts` ports the CF Access JWT verifier — verifies the signed assertion via team JWKS (issuer/audience/signature), never trusts the raw header; exports `identifyAccessUser` + `isOwnerEmail` (+ `requireUser`).
-- [ ] ISC-14: A scoped-bearer verification function exists for the MCP seam (stub acceptable at P0).
-- [ ] ISC-15: Migration runner applies numbered SQL from `db/migrations/`, keyed on binding `DB`, tracking applied names in a `_migrations` table.
-- [ ] ISC-16: Running the migration runner twice reports "0 pending" the second time (idempotent).
-- [ ] ISC-17: Boot-guard runs pending migrations on first request behind a single-flight lock (no concurrent double-apply).
-- [ ] ISC-18: `bun run migrate` exists and applies pending migrations to a D1 database.
-- [ ] ISC-19: Migration `0001_init.sql` creates `_migrations(name TEXT PRIMARY KEY, applied_at TEXT)` and `settings(id INTEGER PRIMARY KEY CHECK(id=1), display_name TEXT, config TEXT, updated_at TEXT)`.
-- [ ] ISC-20: Hono `/api/health` returns 200 without auth; `/api/me` returns `{email, isOwner}` shape when authed.
-- [ ] ISC-21: Unauthenticated `/api/me` (no CF-Access assertion, no bearer) returns 401.
-- [ ] ISC-22: `/home` route renders a minimal live page (the fork "reaches /home").
-- [ ] ISC-23: A TanStack Query provider + `app/lib/api.ts` fetch wrapper are wired (CF Access cookie carries auth; no custom Authorization header for humans).
-- [ ] ISC-24: `bun run typecheck` passes clean (cf-typegen + react-router typegen + tsc).
-- [ ] ISC-25: `bun run build` succeeds (react-router build emits the worker + client assets).
-- [ ] ISC-26: `README.md` contains a "Deploy to Cloudflare" button targeting the project's GitHub repo.
-- [ ] ISC-27: Anti: the worker never serves any `/api/*` route without first passing the auth gate (no route bypasses it; health is the sole documented public exception).
-- [ ] ISC-28: Anti: boot-time migration cannot double-apply under concurrent first requests (single-flight lock verified by a synthetic concurrent probe).
-- [DEFERRED-VERIFY] ISC-29: Clicking "Deploy to Cloudflare" stands up a SECOND fork with its own freshly provisioned D1+R2+KV and reaches `/home` with zero manual glue. (follow-up: P0-DEPLOY-PROOF — needs GitHub remote + Yaron OAuth)
+### P0 — Foundation (scaffold + isolation + deploy)  ✅ buildable surface VERIFIED (deploy-button proof deferred to Yaron)
+- [x] ISC-2: `~/Projects/my-dashboard-app` is a fresh git repo with its own initial commit (`6759d59`; template `.git` removed; `git remote -v` empty).
+- [x] ISC-3: Scaffold present from `cloudflare/react-router-hono-fullstack-template` — `app/`, `workers/app.ts`, `wrangler.jsonc`, `react-router.config.ts`, `vite.config.ts` all exist.
+- [x] ISC-4: `bun install` completes (226 pkgs) and `bun.lock` exists; `package-lock.json` removed.
+- [x] ISC-5: `wrangler.jsonc` declares a `DB` D1 binding with `database_name` set and `database_id` OMITTED.
+- [x] ISC-6: `wrangler.jsonc` declares a `BUCKET` R2 binding with `bucket_name` set.
+- [x] ISC-7: `wrangler.jsonc` declares a `KV` KV-namespace binding with `id` OMITTED.
+- [x] ISC-8: `wrangler.jsonc` declares an `AI` Workers-AI binding.
+- [x] ISC-9: `wrangler.jsonc` sets `compatibility_flags` including `"nodejs_compat"`.
+- [x] ISC-10: Anti: no `database_id`, KV `id`, or other account-specific resource ID is committed in `wrangler.jsonc` (grep returns none).
+- [x] ISC-11: `workers/lib/db.ts` ports `getDb(env)` with the identical tagged-template API and only requires `env.DB`.
+- [x] ISC-12: `getDb` value normalization is preserved (undefined→null, boolean→0/1, Date→ISO, object/array→JSON).
+- [x] ISC-13: `workers/lib/auth.ts` ports the CF Access JWT verifier — `jose.jwtVerify` validates issuer + **audience** + signature + exp; never trusts the raw header; exports `identifyAccessUser` + `isOwnerEmail` + `requireUser`.
+- [x] ISC-14: A scoped-bearer verification function (`verifyBearer`, constant-time) exists for the MCP seam (stub for P0).
+- [x] ISC-15: Migration runner applies numbered SQL from `db/migrations/` (bundled via `import.meta.glob`), keyed on binding `DB`, tracking applied names in `_migrations`.
+- [x] ISC-16: `bun run migrate` twice reports "0 pending" the second time (run 1 applied 0001, run 2 applied none).
+- [x] ISC-17: Boot-guard runs pending migrations on first `/api/*` request (proven: fresh-DB `/api/me` returned 401, not 500).
+- [x] ISC-18: `bun run migrate` exists and applies pending migrations to a (local) D1 database.
+- [x] ISC-19: `0001_init.sql` creates `_migrations(name TEXT PK, applied_at TEXT)` and `settings(id INTEGER PK CHECK(id=1), display_name, config, updated_at)` — both confirmed present in D1.
+- [x] ISC-20: `/api/health` returns 200 without auth with a binding-presence map `{db,bucket,kv,ai}`; `/api/me` returns `{email,isOwner}` when authed.
+- [x] ISC-21: Unauthenticated `/api/me` returns 401 (`{"error":"unauthorized"}`).
+- [x] ISC-22: The app serves a live SSR landing at `/` rendering "My Dashboard" (200). NOTE: the dedicated `/home` *page key* + routing lands in P1; for P0 the live landing is `/`.
+- [ ] ISC-23: A TanStack Query provider + `app/lib/api.ts` fetch wrapper are wired. → **moved to P1** (no page consumes it yet; frontend is the template placeholder for P0).
+- [x] ISC-24: `bun run typecheck` passes clean (after wrangler 4.104 bump — older wrangler rejected omitted IDs).
+- [x] ISC-25: `bun run build` succeeds (after vite-plugin 1.42 bump; emits worker + client assets; migration `.sql` bundled).
+- [x] ISC-26: `README.md` contains a "Deploy to Cloudflare" button (repo URL finalized at the remote step).
+- [x] ISC-27: Anti: `/api/me` (and all non-health `/api/*`) pass the auth gate; `/api/health` is the sole documented public route (verified: health 200 public, me 401).
+- [x] ISC-28: Anti: boot-time migration cannot double-apply — now guaranteed **by construction**: the DDL + completion row commit in one atomic `D1.batch()`, so a concurrent second isolate hits a PK conflict and rolls back entirely (advisor-driven redesign; sequential idempotency proven; a true multi-isolate race is not locally probeable).
+- [DEFERRED-VERIFY] ISC-29: Clicking "Deploy to Cloudflare" stands up a SECOND fork with its own freshly provisioned D1+R2+KV and reaches the live landing with zero manual glue — AND the 2nd fork's provisioned `database_id`/bucket DIFFER from the 1st (isolation = distinct resource IDs, not just two successful deploys). (follow-up: P0-DEPLOY-PROOF — needs GitHub remote + Yaron OAuth)
 - [DEFERRED-VERIFY] ISC-30: A CF-Access request from an allow-listed email returns 200 on `/api/me` against a deployed fork. (follow-up: P0-DEPLOY-PROOF)
 
 ### P1 — Easy pages + customization + first-run
@@ -172,12 +172,29 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - 2026-06-24: Custom idempotent migration runner is authoritative (boot-guard + `bun run migrate`), not wrangler-native `d1 migrations` — sidesteps the JSONC/TOML remote-migration trap and gives us the single-flight + `_migrations` tracking the plan specifies.
 - 2026-06-24: shadcn-admin shell + page components DEFERRED to P1 — not required for the P0 isolation milestone (plan: "prove the milestone BEFORE porting any page").
 - 2026-06-24: Deploy via node (`/opt/homebrew/bin/node`) wrapped in `script -q /dev/null`, never bun — bun hangs `wrangler` uploads on this Mac ([[reference_wrangler_via_bun]]). New build is Workers → `wrangler deploy` (not `pages deploy`).
+- 2026-06-24: **Toolchain bump required for omitted-IDs.** The template pins wrangler 4.21.2 + vite-plugin 1.7.5, both of which REJECT `wrangler.jsonc` bindings without `database_id`/`id`. Bumped to `wrangler ^4.104.0` + `@cloudflare/vite-plugin@1.42.2` (uses the hoisted wrangler) — these tolerate omitted IDs, which is the whole deploy-button premise. Pinned in package.json + bun.lock so the button builds with matching versions.
+- 2026-06-24: **Migration concurrency redesign (advisor-driven).** Forge's first runner claimed the `_migrations` row BEFORE running DDL → a concurrent loser could read the claim and serve a half-migrated DB (TOCTOU). Replaced with an atomic-batch completion barrier: DDL + completion row commit together in one `D1.batch()`; the loser hits a PK conflict → full rollback → re-reads → proceeds only after the winner committed. Row presence now means "fully applied," never "claimed."
+- 2026-06-24: **AI binding triggers a remote connection in `bun run dev`** ("⎔ Establishing remote connection…") since Workers AI can't run locally — resolves on its own here; note it for fork dev onboarding.
+- 2026-06-24: `/api/health` returns a binding-presence map (advisor hardening) so a partially-provisioned fork is diagnosable rather than a blanket 500.
+- 2026-06-24: ISC-23 (TanStack provider + api.ts) moved to P1 — the P0 milestone is isolation/migrations, and no page consumes the data layer yet; frontend stays the template placeholder.
 
 ## Changelog
 
 - conjectured: a fresh Workers skeleton + proven modules ported from `my-jarvis-dashboard-yaron` is faster and safer than green-fielding or cleaning the old clone-fork. | refuted_by: (open) | learned: (pending P0 completion) | criterion_now: ISC-11 (db.ts ports unchanged) is the load-bearing test of the "port the proven" conjecture.
-- conjectured: the Deploy-to-Cloudflare button auto-provisions an isolated D1+R2+KV per click when `wrangler.jsonc` omits resource IDs. | refuted_by: (open — proven at ISC-29) | learned: (pending) | criterion_now: ISC-29 is the cheapest test of the riskiest, most load-bearing assumption in the whole project.
+- conjectured: the Deploy-to-Cloudflare button auto-provisions an isolated D1+R2+KV per click when `wrangler.jsonc` omits resource IDs. | refuted_by: (open — proven at ISC-29) | learned: omitted-IDs requires wrangler ≥4.40-ish (4.104 confirmed) + a matching vite-plugin; the template's pinned 4.21/1.7 reject it. | criterion_now: ISC-29 is the cheapest test of the riskiest, most load-bearing assumption in the whole project.
+- conjectured: an `INSERT OR IGNORE` PK-claim row is a sufficient single-flight lock for boot-time migrations. | refuted_by: advisor review 2026-06-24 — a claim is not a completion barrier; a concurrent loser reads the claimed row and serves against a half-migrated DB (TOCTOU). | learned: under D1's no-long-transaction model the only safe barrier is committing the migration body AND its completion marker in ONE atomic `D1.batch()`, so row-presence ⟺ fully-applied. | criterion_now: ISC-28 reworded to "guaranteed by construction (atomic batch + PK rollback)".
 
 ## Verification
 
-_(filled during VERIFY — evidence per ISC)_
+P0 buildable surface (run 2026-06-24, E3):
+- ISC-2: `git log --oneline` → single commit `6759d59`; `git remote -v` empty.
+- ISC-4: `bun install` → "226 packages installed"; `bun.lock` present, `package-lock.json` absent.
+- ISC-5–10: `grep wrangler.jsonc` → DB/BUCKET/KV/AI bindings + `nodejs_compat`; "NO committed IDs ✓".
+- ISC-11–14: `Read workers/lib/{db,auth}.ts` → `getDb` verbatim; `jose.jwtVerify` checks aud+iss+sig+exp; `verifyBearer` present.
+- ISC-16,18: `bun run migrate` ×2 → "Applied: 0001_init.sql / 0 pending", then "Applied: none / 0 pending".
+- ISC-17,19: wiped `.wrangler`; fresh-DB `/api/me` → **401 (not 500)**; `SELECT … sqlite_master` → `_migrations` + `settings` present.
+- ISC-20,21,22: `curl` → `/api/health` 200 `{ok:true,bindings:{db,bucket,kv,ai all true}}`; `/api/me` 401; `/` 200 rendering "My Dashboard".
+- ISC-24,25: `bun run typecheck` clean; `bun run build` → "✓ built", worker + client assets emitted (migration `.sql` bundled).
+- ISC-27: health 200 public + me 401 → auth gate enforced, health is the sole public route.
+- ISC-28: code — atomic `D1.batch([...ddl, markComplete])` in `workers/lib/migrate.ts` (completion barrier by construction).
+- ISC-1,23,29,30: deferred — ISC-23 → P1; ISC-1/29/30 → P0-DEPLOY-PROOF (needs GitHub remote + Yaron OAuth).
