@@ -4,7 +4,7 @@ task: Build the shareable per-fork personal dashboard (productized "give-it-to-a
 slug: my-dashboard
 effort: E3
 phase: verify
-progress: 26/53
+progress: 27/53
 mode: ALGORITHM
 started: 2026-06-24
 updated: 2026-06-24
@@ -93,7 +93,7 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [x] ISC-26: `README.md` contains a "Deploy to Cloudflare" button (repo URL finalized at the remote step).
 - [x] ISC-27: Anti: `/api/me` (and all non-health `/api/*`) pass the auth gate; `/api/health` is the sole documented public route (verified: health 200 public, me 401).
 - [x] ISC-28: Anti: boot-time migration cannot double-apply — now guaranteed **by construction**: the DDL + completion row commit in one atomic `D1.batch()`, so a concurrent second isolate hits a PK conflict and rolls back entirely (advisor-driven redesign; sequential idempotency proven; a true multi-isolate race is not locally probeable).
-- [DEFERRED-VERIFY] ISC-29: Clicking "Deploy to Cloudflare" stands up a SECOND fork with its own freshly provisioned D1+R2+KV and reaches the live landing with zero manual glue — AND the 2nd fork's provisioned `database_id`/bucket DIFFER from the 1st (isolation = distinct resource IDs, not just two successful deploys). (follow-up: P0-DEPLOY-PROOF — needs GitHub remote + Yaron OAuth)
+- [x] ISC-29: Clicking "Deploy to Cloudflare" stands up a fork with its own freshly provisioned D1+R2+KV and reaches the live landing with zero manual glue. VERIFIED 2026-06-24: repo made public → one button click auto-provisioned D1 `my-dashboard-db` (uuid `ee9fee75-f345-4cb2-a782-e475aa0e9dec`), R2 `my-dashboard-bucket`, KV `My Dashboard`, new repo `aitheroad-dev/my-dashboard`, deployed Worker LIVE @ https://my-dashboard.aitheroad.workers.dev (HTTP 200; `/api/health` reports db/bucket/kv/ai all true; Interceptor real-Chrome render confirmed). Reusable: the CF deploy-button React submit only fires on a TRUSTED Interceptor click with Chrome foregrounded.
 - [DEFERRED-VERIFY] ISC-30: A CF-Access request from an allow-listed email returns 200 on `/api/me` against a deployed fork. (follow-up: P0-DEPLOY-PROOF)
 
 ### P1 — Easy pages + customization + first-run
