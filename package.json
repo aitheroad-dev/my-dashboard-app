@@ -1,0 +1,48 @@
+{
+  "name": "my-dashboard",
+  "description": "My Dashboard — a productized, shareable per-fork personal dashboard on Cloudflare Workers (React Router + Hono).",
+  "private": true,
+  "type": "module",
+  "cloudflare": {
+    "label": "My Dashboard",
+    "products": [
+      "Workers"
+    ],
+    "categories": [
+      "starter"
+    ],
+    "docs_url": "https://developers.cloudflare.com/workers",
+    "publish": true
+  },
+  "dependencies": {
+    "hono": "4.8.2",
+    "isbot": "5.1.26",
+    "jose": "^6.2.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-router": "7.6.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.42.2",
+    "@cloudflare/workers-types": "^4.20250425.0",
+    "@react-router/dev": "7.6.3",
+    "@tailwindcss/vite": "4.1.4",
+    "@types/node": "24.0.4",
+    "@types/react": "19.0.10",
+    "@types/react-dom": "19.0.4",
+    "tailwindcss": "4.1.1",
+    "typescript": "5.8.3",
+    "vite": "^6.0.0",
+    "vite-tsconfig-paths": "5.1.4",
+    "wrangler": "^4.104.0"
+  },
+  "scripts": {
+    "build": "react-router build",
+    "cf-typegen": "wrangler types",
+    "deploy": "bun run build && wrangler deploy",
+    "dev": "react-router dev",
+    "migrate": "bun scripts/migrate.ts",
+    "preview": "bun run build && vite preview",
+    "typecheck": "bun run cf-typegen && react-router typegen && tsc -b"
+  }
+}

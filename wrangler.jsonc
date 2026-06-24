@@ -1,0 +1,43 @@
+/**
+ * Wrangler config for a My Dashboard fork.
+ * Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Resource IDs (database_id, KV id) are intentionally OMITTED so the
+ * "Deploy to Cloudflare" button auto-provisions a FRESH, ISOLATED
+ * D1 + R2 + KV per recipient and writes the IDs back into THIS file
+ * (JSONC write-back only — workers-sdk #13632; a .toml would break
+ * `wrangler d1 migrations apply --remote`). Do NOT commit resource IDs.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "my-dashboard",
+  "compatibility_date": "2025-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/app.ts",
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true,
+
+  // Per-fork bindings — physically isolated by construction (L2).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "my-dashboard-db"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "my-dashboard-bucket"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  }
+}
