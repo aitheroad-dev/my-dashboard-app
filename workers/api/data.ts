@@ -109,7 +109,7 @@ async function readConfig(c: { env: AppEnv }): Promise<{ display_name: string; c
   const raw = rows[0]?.config ? safeParse(rows[0].config) : {};
   const config = migrateConfig(raw);
   const display_name = rows[0]?.display_name ?? config.display_name;
-  return { display_name: display_name ?? config.display_name, config, pages: resolvePages(config) };
+  return { display_name, config, pages: resolvePages(config) };
 }
 
 function safeParse(s: string): unknown {

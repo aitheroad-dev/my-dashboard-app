@@ -37,10 +37,14 @@ export const ConfigSchema = z.object({
   schemaVersion: z.number().int().catch(CURRENT_SCHEMA_VERSION).default(CURRENT_SCHEMA_VERSION),
   display_name: z.string().catch("My Dashboard").default("My Dashboard"),
   theme: ThemeSchema.default("system"),
-  // Forgiving arrays: unknown/foreign keys are tolerated at parse time and filtered
-  // in normalizeConfig — this is what makes additive page evolution non-breaking.
-  enabled_pages: z.array(z.string()).default([...DEFAULT_ENABLED]),
-  page_order: z.array(z.string()).default([...PAGE_KEYS]),
+  // Forgiving arrays: unknown/foreign keys are tolerated and filtered in
+  // normalizeConfig — this is what makes additive page evolution non-breaking.
+  // NOTE (zod v4): `.default()` only fires on `undefined`; a present-but-wrong-type
+  // value (non-array, or a non-string element) THROWS without `.catch()`. The
+  // `.catch()` is load-bearing — it keeps a corrupted/old stored config from
+  // 500-ing /api/settings (invariant: an old/garbage config never throws).
+  enabled_pages: z.array(z.string()).catch([...DEFAULT_ENABLED]).default([...DEFAULT_ENABLED]),
+  page_order: z.array(z.string()).catch([...PAGE_KEYS]).default([...PAGE_KEYS]),
   tools_key: z.string().nullable().catch(null).default(null),
   prefs: z.record(z.string(), z.unknown()).catch({}).default({}),
 });
@@ -84,7 +88,14 @@ export function migrateConfig(raw: unknown): Config {
   // v1 is current, so there is nothing to step yet.
   obj.schemaVersion = CURRENT_SCHEMA_VERSION;
 
-  const parsed = ConfigSchema.parse(obj); // defaults fill every gap
+  // Per-field `.catch()` makes parse throw-proof for type errors; this guard is
+  // belt-and-suspenders for any shape we didn't anticipate — migrateConfig never throws.
+  let parsed: Config;
+  try {
+    parsed = ConfigSchema.parse(obj); // defaults fill every gap
+  } catch {
+    parsed = ConfigSchema.parse({ schemaVersion: CURRENT_SCHEMA_VERSION });
+  }
   return normalizeConfig(parsed);
 }
 
