@@ -1,9 +1,8 @@
 import type { AppEnv } from "./env";
 
 /**
- * D1-backed tagged-template SQL — ported UNCHANGED from the proven
- * `my-jarvis-dashboard-yaron` layer so handler call sites keep their
- * `sql`...`` shape.
+ * D1-backed tagged-template SQL — a proven single-tenant data layer reused
+ * UNCHANGED so handler call sites keep their `sql`...`` shape.
  *
  *   const sql = getDb(env);
  *   const rows = await sql`SELECT * FROM projects ORDER BY created_at DESC`;

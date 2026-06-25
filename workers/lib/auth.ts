@@ -4,8 +4,8 @@ import type { AppEnv } from "./env";
 /**
  * Cloudflare Access verification for a per-fork dashboard.
  *
- * Adapted from the proven `my-jarvis-dashboard-yaron` verifier, stripped of the
- * single-tenant move-role / page-grant model (each fork is its own tenant).
+ * Adapted from a proven single-tenant dashboard verifier, stripped of its
+ * app-specific role / page-grant model (each fork is its own tenant).
  * We VERIFY the signed `Cf-Access-Jwt-Assertion` JWT (RS256) against the team
  * JWKS — issuer + audience + signature — and derive the email from the verified
  * claims, NEVER from the spoofable `Cf-Access-Authenticated-User-Email` header.
@@ -18,9 +18,11 @@ export type AuthedUser = {
   sessionId: string | null;
 };
 
-// Dev default owner — overridden per fork by TENANT_OWNER_EMAIL. Lockout-safe:
-// the owner is always added to the allow-list so a dropped var can't lock them out.
-const DEFAULT_OWNER = "aitheroad@gmail.com";
+// Neutral placeholder owner — EVERY fork sets its real owner via the
+// TENANT_OWNER_EMAIL var at provisioning. Kept generic so the template carries no
+// personal data. Lockout-safe: the resolved owner is always added to the
+// allow-list so a dropped var can't lock them out.
+const DEFAULT_OWNER = "owner@example.com";
 
 // Module-scope JWKS cache, keyed by team domain. jose handles key rotation +
 // cooldown internally; reusing the set across requests avoids a certs fetch per call.

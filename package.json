@@ -44,7 +44,8 @@
   "scripts": {
     "build": "react-router build",
     "cf-typegen": "wrangler types",
-    "deploy": "bun run build && wrangler deploy",
+    "check:clean": "node scripts/check-template-clean.mjs",
+    "deploy": "bun run check:clean && bun run build && wrangler deploy",
     "dev": "react-router dev",
     "migrate": "bun scripts/migrate.ts",
     "preview": "bun run build && vite preview",

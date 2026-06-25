@@ -11,9 +11,9 @@ import {
 
 /**
  * P1 data routes — mounted at `/api`. Auth via the `getViewer` seam (real CF
- * Access where configured, owner open-dev otherwise). Ported SQL/data shapes
- * from `my-jarvis-dashboard-yaron`; portfolio intentionally ships EMPTY (its
- * source handler embedded Yaron's personal holdings — never in a recipient fork).
+ * Access where configured, owner open-dev otherwise). Generic data shapes;
+ * portfolio ships EMPTY by design — a fork starts with no holdings and the
+ * recipient connects their own. The template carries no personal data.
  */
 export const data = new Hono<{ Bindings: AppEnv }>();
 
@@ -85,8 +85,8 @@ data.get("/goals", async (c) => {
 data.get("/portfolio", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  // Empty productized snapshot. A recipient connects their own holdings later
-  // (pai-portfolio-style sync / P2+). Yaron's personal SEED never ships here.
+  // Empty productized snapshot. A fork starts with zero holdings; the recipient
+  // connects their own later (sync integration in a later phase). No seed ships.
   return c.json({
     base: "EUR",
     as_of: null,
