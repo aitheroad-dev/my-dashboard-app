@@ -3,8 +3,8 @@ project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
 effort: E3
-phase: build
-progress: 27/53
+phase: verify
+progress: 37/57
 mode: ALGORITHM
 started: 2026-06-24
 updated: 2026-06-25
@@ -87,7 +87,7 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [x] ISC-20: `/api/health` returns 200 without auth with a binding-presence map `{db,bucket,kv,ai}`; `/api/me` returns `{email,isOwner}` when authed.
 - [x] ISC-21: Unauthenticated `/api/me` returns 401 (`{"error":"unauthorized"}`).
 - [x] ISC-22: The app serves a live SSR landing at `/` rendering "My Dashboard" (200). NOTE: the dedicated `/home` *page key* + routing lands in P1; for P0 the live landing is `/`.
-- [ ] ISC-23: A TanStack Query provider + `app/lib/api.ts` fetch wrapper are wired. → **moved to P1** (no page consumes it yet; frontend is the template placeholder for P0).
+- [x] ISC-23: A TanStack Query provider + `app/lib/api.ts` fetch wrapper are wired. DONE in P1: `QueryClientProvider` in `app/root.tsx`; typed `apiGet/apiPut` + query hooks in `app/lib/api.ts`; every page reads through it.
 - [x] ISC-24: `bun run typecheck` passes clean (after wrangler 4.104 bump — older wrangler rejected omitted IDs).
 - [x] ISC-25: `bun run build` succeeds (after vite-plugin 1.42 bump; emits worker + client assets; migration `.sql` bundled).
 - [x] ISC-26: `README.md` contains a "Deploy to Cloudflare" button (repo URL finalized at the remote step).
@@ -99,17 +99,17 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 ### P1 — Easy pages + customization + first-run
 > ISC-31 split into per-page probes (ID-stability: parent preserved as this header). "Slice 1" = the spine + 4 pages live with empty states + viewer auth; Settings UI export/import (ISC-33) + full toggle round-trip (ISC-34) + migration fixtures (ISC-36/37 tests) follow.
 - [ ] ISC-31: [SPLIT — see ISC-31.1..31.5]
-- [ ] ISC-31.1: `/api/projects` (Hono, `getDb`) returns projects rows; `/projects` page renders them (or styled empty state).
-- [ ] ISC-31.2: `/api/goals` (Hono, `getDb`, project join) returns goals rows; `/goals` page renders them (or empty state).
-- [ ] ISC-31.3: `/api/portfolio` returns an empty productized snapshot (Yaron's personal holdings NOT shipped); `/portfolio` page renders the "connect your portfolio" empty state.
-- [ ] ISC-31.4: `/` Home renders an overview (project/goal counts + nav) from live `/api/*`, never blank.
-- [ ] ISC-31.5: A `getViewer(request, env)` seam gates data endpoints: enforces verified CF Access when the fork configures it, allows owner open-dev when Access is unconfigured (local dev / bare fork). Anti: an Access-configured fork still 401s an unverified request.
-- [ ] ISC-32: Zod `ConfigSchema` with embedded `schemaVersion`, every field `.default()`, and a lazy `migrateConfig(raw)` chain.
-- [ ] ISC-33: Settings UI reads/writes the `settings` row; export = validated blob, import = validate + migrate-to-current.
-- [ ] ISC-34: Page manifest filtered by `enabled_pages` + ordered by `page_order`; toggling a page off removes it from sidebar + routes next load and survives export→fresh-fork→import.
-- [ ] ISC-35: First-run shows seeded demo content or a styled empty state on every page — never blank.
-- [ ] ISC-36: Importing an OLD exported config into a newer schema yields a valid merged config (defaults fill gaps), no error.
-- [ ] ISC-37: Anti: an additive new config key never breaks import of a config exported by an older fork.
+- [x] ISC-31.1: `/api/projects` (Hono, `getDb`) returns projects rows; `/projects` page renders them (or styled empty state). Verified: curl 200 → 2 demo projects w/ goal_count subquery; real-Chrome prod render shows 2 cards.
+- [x] ISC-31.2: `/api/goals` (Hono, `getDb`, project join) returns goals rows; `/goals` page renders them (or empty state). Verified: curl 200 → 3 goals w/ project_name join; real-Chrome render shows 3 with project labels.
+- [x] ISC-31.3: `/api/portfolio` returns an empty productized snapshot (Yaron's personal holdings NOT shipped); `/portfolio` page renders the "connect your portfolio" empty state. Verified: curl `configured:false, holdings:[]`; real-Chrome shows "No portfolio connected".
+- [x] ISC-31.4: `/` Home renders an overview (project/goal counts + nav) from live `/api/*`, never blank. Verified real-Chrome: "2 active projects / 2 active goals", welcome card, recent-projects list.
+- [x] ISC-31.5: A `getViewer(request, env)` seam gates data endpoints: enforces verified CF Access when the fork configures it, allows owner open-dev when Access is unconfigured (local dev / bare fork). Anti: an Access-configured fork still 401s an unverified request. Verified via probe: access-env + no token → null (401); bare env → open-dev owner.
+- [x] ISC-32: Zod `ConfigSchema` with embedded `schemaVersion`, every field `.default()`, and a lazy `migrateConfig(raw)` chain. Verified: `/api/settings` returns fully default-filled config; probe confirmed defaults.
+- [ ] ISC-33: Settings UI reads/writes the `settings` row; export = validated blob, import = validate + migrate-to-current. PARTIAL: server `GET/PUT /api/settings` done + round-trip verified (toggle/rename/theme persist); the Settings UI PAGE (export/import buttons) is next slice.
+- [ ] ISC-34: Page manifest filtered by `enabled_pages` + ordered by `page_order`; toggling a page off removes it from sidebar + routes next load and survives export→fresh-fork→import. PARTIAL: manifest filters+orders the SIDEBAR (proven — PUT dropping "goals" → `pages` excludes it, Shell renders from it); route-level gating + export/import survival = next slice.
+- [x] ISC-35: First-run shows seeded demo content or a styled empty state on every page — never blank. Verified: demo seed renders on Home/Projects/Goals; Portfolio + each list have styled EmptyState components.
+- [x] ISC-36: Importing an OLD exported config into a newer schema yields a valid merged config (defaults fill gaps), no error. Verified via probe: `{schemaVersion:0, theme:"dark", ...}` → schemaVersion 1, theme kept, defaults filled.
+- [x] ISC-37: Anti: an additive new config key never breaks import of a config exported by an older fork. Verified via probe: unknown page key "FUTURE_PAGE" dropped (not fatal); null/string/bad-type inputs never throw (`.catch()` per field).
 
 ### P2 — Tools embed + Knowledge Base
 - [ ] ISC-38: Tools page embeds pai-tools via a per-fork `tools_key`; absent key → styled "not configured" state.
@@ -175,6 +175,8 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - 2026-06-25: **P1 Slice 1 scope.** P0 closed (ISC-29 deploy-proof verified; ISC-30 CF-Access deferred). This run builds the P1 spine: TanStack Query provider + `app/lib/api.ts` (ISC-23), Zod versioned config (ISC-32), page manifest + sidebar shell (ISC-34 foundation), Hono data handlers + the 4 easy pages with never-blank empty states (ISC-31.1..31.5, 35). Settings export/import UI (ISC-33) + toggle round-trip + migration fixtures (ISC-36/37) follow next slice.
 - 2026-06-25: **Portfolio ships EMPTY, not seeded.** The source `/api/portfolio` handler embeds Yaron's real holdings (SLV/GLDG/… from `pai-portfolio sync`). A recipient fork must never carry his personal data → portfolio returns an empty productized snapshot + a "connect your portfolio" empty state. Enforces the "wiped of personal data" + isolation principles.
 - 2026-06-25: **`getViewer` auth seam (Access-or-open-dev).** Data endpoints can't use bare `requireUser` — on a fork with no CF Access configured (the current live bare-workers.dev fork, and all local dev) it would 401 every page. `getViewer` enforces verified Access when `ACCESS_TEAM_DOMAIN`+`ACCESS_AUD` are set, else grants an owner open-dev viewer. Keeps the gate real where Access exists (ISC-31.5 anti) while letting an unconfigured fork actually show its seeded pages.
+- 2026-06-25: **Dev-server hydration quirk DEFERRED (not blocking).** `bun run dev` (react-router dev + `@cloudflare/vite-plugin`) throws `Cannot read properties of null (reading 'useContext')` inside react-router's `Meta`, from `.vite/deps` optimized chunks — DEV ONLY. The PRODUCTION build is clean: `bun run build` green, and the prod preview (`vite preview`, real workerd bundle) renders all 4 pages correctly in real Chrome — and production is exactly what ships to recipients (ISC-29's live fork already rendered prod-built). Root cause is the dev dep-optimizer's module graph (identical render logic works in prod; only the dev bundling differs), not our SSR/CSR output. Tried `resolve.dedupe` + `optimizeDeps.include` for the new react-consuming deps — did not resolve; deeper plugin/version interplay. Follow-up: fix the dev loop (try plugin order / `optimizeDeps.exclude: ['react-router']` / version bump) so local hot-reload works for future slices. Verification this slice ran against the prod preview.
+- 2026-06-25: **Advisor (commitment boundary) — proceed.** Advisor flagged "no ISA.md" (false positive — it scans MEMORY/WORK, not this project ISA, which has 53→57 ISCs) and "confirm auth seam not a stub" (already negative-tested: access-configured + no token → 401). Its config-migration + empty-state cautions were already covered by probes. Net: no blocker; the two it would block on are both satisfied. Hydration deferral accepted with the root-cause note above.
 - 2026-06-25: **Single-author slice; Forge as independent hardening pass (delegation show-your-math).** This is a small, tightly-coupled vertical slice (shared `api.ts`/config/manifest contracts). A 2nd concurrent write-agent recreates the concurrent-edit conflict class documented for this lineage ([[feedback_concurrent_edit_commit]]); the parallelizable surface is too small to justify it. Delegation = 1 (Forge runs read-then-fix on the quiet committed tree = cross-vendor independence per Yaron's "same-family review shares blind spots" principle), under the E3 soft floor of 2 by design.
 - 2026-06-24: Repo home = `~/Projects/my-dashboard-app` (fresh dir + fresh git), per Yaron — leaves the set-aside `~/Projects/my-dashboard` clone-fork untouched as reference. GitHub repo name TBD at the deploy-button step.
 - 2026-06-24: Verified the actual template before writing this ISA (cloned `cloudflare/react-router-hono-fullstack-template`, inspected real structure) rather than inferring — Explore's structural details came from the yaron repo, not the template. Real facts: Hono 4.8.2 / RR 7.6.3 / vite 6 / wrangler.jsonc / `workers/app.ts` Hono catch-all / `cloudflare.publish:true` block powers the Deploy button / template's stated UI system is shadcn/ui.
@@ -196,6 +198,9 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 
 ## Verification
 
+- conjectured: P1 pages "port" from `my-jarvis-dashboard-yaron` near-verbatim (per the plan's "port existing page components + their /api/* handlers"). | refuted_by: the source is Pages-Functions + react-admin/atomic-crm; the target is Hono + RR7 + bare TanStack Query — the API handlers are rewritten as Hono routes and the pages are rebuilt on the new data layer; and the source `/api/portfolio` embeds Yaron's real holdings. | learned: "port the proven" holds for the DATA layer (`getDb` + SQL shapes port unchanged) but NOT the framework seam (handlers + UI rebuilt) — port the data, rebuild the seam; and a "port" can smuggle personal data, so privacy is an explicit anti-criterion. | criterion_now: ISC-31.1–31.4 verify rebuilt-on-stack; ISC-31.3 ensures the empty productized portfolio.
+- conjectured: a green local `bun run build` + a green dev server together gate "the app renders." | refuted_by: `bun run dev` (cloudflare-vite-plugin) crashes in react-router's `Meta` while the production build renders all pages cleanly in real Chrome. | learned: for this stack, the PRODUCTION preview (`vite preview`, real workerd) is the faithful render check — verify there, not against the dev server; dev hot-reload is a separate, deferrable concern. | criterion_now: the P1 UI verification evidence is captured against the prod preview.
+
 P0 buildable surface (run 2026-06-24, E3):
 - ISC-2: `git log --oneline` → single commit `6759d59`; `git remote -v` empty.
 - ISC-4: `bun install` → "226 packages installed"; `bun.lock` present, `package-lock.json` absent.
@@ -207,4 +212,13 @@ P0 buildable surface (run 2026-06-24, E3):
 - ISC-24,25: `bun run typecheck` clean; `bun run build` → "✓ built", worker + client assets emitted (migration `.sql` bundled).
 - ISC-27: health 200 public + me 401 → auth gate enforced, health is the sole public route.
 - ISC-28: code — atomic `D1.batch([...ddl, markComplete])` in `workers/lib/migrate.ts` (completion barrier by construction).
-- ISC-1,23,29,30: deferred — ISC-23 → P1; ISC-1/29/30 → P0-DEPLOY-PROOF (needs GitHub remote + Yaron OAuth).
+- ISC-1,29,30: ISC-1/29 closed (deploy-proof, prior run); ISC-30 still DEFERRED (CF Access on the fork).
+
+P1 Slice 1 (run 2026-06-25, E3) — commit `75769cc`:
+- Build: `bun run typecheck` EXIT 0 (after `wrangler types` + `react-router typegen` + `tsc -b`); `bun run build` EXIT 0 (client + SSR bundles, 15.6 kB CSS = Tailwind compiled the new classes).
+- Migrate: `bun run migrate` applied `0002_p1.sql`; 2nd run "Applied: none / 0 pending" (idempotent).
+- API (local dev, open-dev viewer): `/api/health` 200 all-bindings-true; `/api/me` 200 `{owner@local,open-dev}`; `/api/settings` 200 fully-default config + `pages:[home,projects,goals,portfolio]`; `/api/projects` 200 (2 demo, goal_count 1/2); `/api/goals` 200 (3, project_name joined); `/api/portfolio` 200 `{configured:false, holdings:[]}`.
+- Settings write: `PUT /api/settings` dropping "goals" + rename + theme:dark → `pages:[home,projects,portfolio]`, display_name "Rex Test", theme dark; re-GET reflects; restore → 4 pages.
+- Auth seam probe: access-env (`ACCESS_TEAM_DOMAIN`+`ACCESS_AUD`) + no token → `getViewer` null (= 401); bare env → open-dev owner.
+- Config probe: `migrateConfig({})` defaults; `migrateConfig({schemaVersion:0,enabled_pages:[...,"FUTURE_PAGE"],theme:"dark"})` → v1, theme kept, FUTURE_PAGE dropped; `migrateConfig(null|"str"|{theme:99})` never throws.
+- UI (real Chrome, Interceptor, against prod preview `vite preview` @ :4173): Home (nav + 2/2 stat cards + welcome + recent projects), `/projects` (2 cards), `/goals` (3 w/ project labels), `/portfolio` ("No portfolio connected" empty state). Dev server (`react-router dev`) has a separate cloudflare-vite-plugin hydration error — prod verified instead (see Decisions).
