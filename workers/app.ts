@@ -3,7 +3,9 @@ import { createRequestHandler } from "react-router";
 import type { AppEnv } from "./lib/env";
 import { runMigrations } from "./lib/migrate";
 import { getViewer } from "./lib/viewer";
+import { verifyBearer } from "./lib/auth";
 import { data } from "./api/data";
+import { mcpReadHandler } from "./mcp";
 
 const app = new Hono<{ Bindings: AppEnv }>();
 
@@ -50,6 +52,24 @@ app.get("/api/me", async (c) => {
 // P1 data routes (projects/goals/portfolio/settings). The /api/* migration
 // boot-guard above already ran for these paths; mounted before the SSR catch-all.
 app.route("/api", data);
+
+// MCP read-only control plane (ISC-42). Outside /api, so it has no Access JWT and
+// the /api/* boot-guard doesn't cover it — gate on the scoped per-fork bearer and
+// ensure migrations here. Guarded WRITE tools (McpAgent DO + elicitation) land in
+// P3 Slice 1. Registered before the SSR catch-all.
+app.all("/mcp", async (c) => {
+  if (!verifyBearer(c.req.raw, c.env)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  await ensureMigrations(c.env);
+  // Hono's ExecutionContext vs the CF runtime's ExecutionContext<unknown> differ
+  // only structurally; the SDK handler uses ctx.waitUntil/passThroughOnException.
+  return mcpReadHandler(
+    c.req.raw,
+    c.env,
+    c.executionCtx as unknown as ExecutionContext,
+  );
+});
 
 // React Router SSR catch-all — must stay last.
 app.get("*", (c) => {
