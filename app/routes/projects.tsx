@@ -1,6 +1,6 @@
 import { FolderKanban } from "lucide-react";
 import type { Route } from "./+types/projects";
-import { useProjects } from "../lib/api";
+import { useProjects, useRequireEnabled } from "../lib/api";
 import {
   PageHeader,
   Card,
@@ -15,6 +15,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 export default function Projects() {
+  useRequireEnabled("projects");
   const { data, isLoading, error } = useProjects();
 
   return (

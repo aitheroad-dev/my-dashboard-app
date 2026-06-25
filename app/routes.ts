@@ -11,5 +11,6 @@ export default [
     route("projects", "routes/projects.tsx"),
     route("goals", "routes/goals.tsx"),
     route("portfolio", "routes/portfolio.tsx"),
+    route("settings", "routes/settings.tsx"),
   ]),
 ] satisfies RouteConfig;

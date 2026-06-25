@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router";
-import { LayoutDashboard } from "lucide-react";
-import { useSettings, type PageKey } from "../lib/api";
+import { LayoutDashboard, Settings as SettingsIcon } from "lucide-react";
+import { useMe, useSettings, type PageKey } from "../lib/api";
 import { navFromPages } from "../lib/pages";
 import { cn } from "../lib/utils";
 
@@ -15,6 +15,7 @@ const FALLBACK_PAGES: PageKey[] = ["home", "projects", "goals", "portfolio"];
  */
 export default function Shell() {
   const { data: settings } = useSettings();
+  const { data: me } = useMe();
   const pages = settings?.pages ?? FALLBACK_PAGES;
   const nav = navFromPages(pages);
   const title = settings?.display_name ?? "My Dashboard";
@@ -49,6 +50,24 @@ export default function Shell() {
             </NavLink>
           ))}
         </nav>
+        {me?.isOwner && (
+          <div className="border-t border-slate-200 p-3">
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                )
+              }
+            >
+              <SettingsIcon className="h-4 w-4 shrink-0" />
+              Settings
+            </NavLink>
+          </div>
+        )}
       </aside>
 
       {/* Mobile top nav */}
@@ -76,6 +95,22 @@ export default function Shell() {
               {p.label}
             </NavLink>
           ))}
+          {me?.isOwner && (
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
+                  isActive
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600",
+                )
+              }
+            >
+              <SettingsIcon className="h-3.5 w-3.5" />
+              Settings
+            </NavLink>
+          )}
         </nav>
       </header>
 

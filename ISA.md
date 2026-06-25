@@ -2,9 +2,9 @@
 project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
-effort: E3
-phase: verify
-progress: 37/57
+effort: E4
+phase: build
+progress: 39/57
 mode: ALGORITHM
 started: 2026-06-24
 updated: 2026-06-25
@@ -105,8 +105,8 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [x] ISC-31.4: `/` Home renders an overview (project/goal counts + nav) from live `/api/*`, never blank. Verified real-Chrome: "2 active projects / 2 active goals", welcome card, recent-projects list.
 - [x] ISC-31.5: A `getViewer(request, env)` seam gates data endpoints: enforces verified CF Access when the fork configures it, allows owner open-dev when Access is unconfigured (local dev / bare fork). Anti: an Access-configured fork still 401s an unverified request. Verified via probe: access-env + no token → null (401); bare env → open-dev owner.
 - [x] ISC-32: Zod `ConfigSchema` with embedded `schemaVersion`, every field `.default()`, and a lazy `migrateConfig(raw)` chain. Verified: `/api/settings` returns fully default-filled config; probe confirmed defaults.
-- [ ] ISC-33: Settings UI reads/writes the `settings` row; export = validated blob, import = validate + migrate-to-current. PARTIAL: server `GET/PUT /api/settings` done + round-trip verified (toggle/rename/theme persist); the Settings UI PAGE (export/import buttons) is next slice.
-- [ ] ISC-34: Page manifest filtered by `enabled_pages` + ordered by `page_order`; toggling a page off removes it from sidebar + routes next load and survives export→fresh-fork→import. PARTIAL: manifest filters+orders the SIDEBAR (proven — PUT dropping "goals" → `pages` excludes it, Shell renders from it); route-level gating + export/import survival = next slice.
+- [x] ISC-33: Settings UI reads/writes the `settings` row; export = validated blob, import = validate + migrate-to-current. DONE (Block A 2026-06-25): owner-only `/settings` page (display_name/theme/page-toggle/reorder) + Export (download config JSON) + Import (file→parse→PUT, server mergeConfig validates+migrates). Real-Chrome verified render + toggle→Save persist; import of `{schemaVersion:0,theme:"dark"}` → migrated to v1 theme kept; garbage-typed import → HTTP 200 no throw.
+- [x] ISC-34: Page manifest filtered by `enabled_pages` + ordered by `page_order`; toggling a page off removes it from sidebar + routes next load and survives export→fresh-fork→import. DONE (Block A 2026-06-25): toggle Goals off + Save → sidebar drops Goals (real-Chrome: links = /,/projects,/portfolio,/settings) AND `/goals` redirects to `/` (useRequireEnabled). Reorder via page_order PUT → resolved order changes. Export blob = settings.config verbatim → re-import via PUT keeps it. `navFromPages` restricted to BUILT_PAGES (no 404 nav links).
 - [x] ISC-35: First-run shows seeded demo content or a styled empty state on every page — never blank. Verified: demo seed renders on Home/Projects/Goals; Portfolio + each list have styled EmptyState components.
 - [x] ISC-36: Importing an OLD exported config into a newer schema yields a valid merged config (defaults fill gaps), no error. Verified via probe: `{schemaVersion:0, theme:"dark", ...}` → schemaVersion 1, theme kept, defaults filled.
 - [x] ISC-37: Anti: an additive new config key never breaks import of a config exported by an older fork. Verified via probe: unknown page key "FUTURE_PAGE" dropped (not fatal); null/string/bad-type inputs never throw (`.catch()` per field).
@@ -172,6 +172,7 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 
 ## Decisions
 
+- 2026-06-25 (Block A): **Phase 1 finished — Settings page + customization (ISC-33/34).** Built owner-only `/settings` (rename/theme/toggle/reorder + export/import), `useRequireEnabled` route-gating, owner gear in Shell, Button/Toggle UI primitives. **Forge cross-vendor audit (GPT-5.5) → `concerns`, 7 verified findings; fixed 5:** (HIGH) import could ship a fork with `home` disabled → enforced `ALWAYS_ON_PAGES=["home"]` in `normalizeConfig` server-side (defense-in-depth, closes ALL write paths, live-verified: import `enabled_pages:["projects"]` → home forced back); (MED) non-owner flashed the owner form during `/api/me` load → gate now waits for BOTH me+settings; (MED) `navFromPages` could emit 404 links for enabled-but-unrouted pages → restricted to `BUILT_PAGES`; (LOW) settings error showed infinite spinner → error checked first; (LOW) added 256 KB import size cap. **2 NOT fixed by design:** open-dev "everyone is owner" on a bare fork = the documented L2 trust model (recipient adds CF Access = ISC-30, deferred per today's scope); client-effect page-gating "flash" = acceptable (page visibility is a UI preference, not an authz boundary — the sensitive surface, settings PUT, is owner-gated server-side).
 - 2026-06-25: **Template-cleanliness sweep (clean by construction, not by patching).** Per Yaron — the template must ship with ZERO personal data and need no intervention, not be patched page-by-page. Swept the whole repo: fixed `auth.ts` `DEFAULT_OWNER` (was `aitheroad@gmail.com` → neutral `owner@example.com`; real owner is per-fork `TENANT_OWNER_EMAIL`); genericized provenance comments in `auth.ts`/`db.ts`/`data.ts` (dropped "Yaron's" + the private source-repo name); scrubbed the live D1 uuid + holdings tickers from this ISA. Added `scripts/check-template-clean.mjs` + `bun run check:clean`, wired into `deploy` (fail-closed) — a denylist guard that fails the build if maintainer name/email/addresses/account-IDs/KvK/BTW ever reach the product tree. Verified: guard passes (27 product files), typecheck+build green. **Open call for Yaron:** ISA.md (this builder design doc) still ships in the deploy-button fork and names the maintainer — handling (keep as builder doc / fully genericize / relocate out of the shipped repo) is his decision; guard excludes ISA pending it.
 - 2026-06-25: **P1 Slice 1 scope.** P0 closed (ISC-29 deploy-proof verified; ISC-30 CF-Access deferred). This run builds the P1 spine: TanStack Query provider + `app/lib/api.ts` (ISC-23), Zod versioned config (ISC-32), page manifest + sidebar shell (ISC-34 foundation), Hono data handlers + the 4 easy pages with never-blank empty states (ISC-31.1..31.5, 35). Settings export/import UI (ISC-33) + toggle round-trip + migration fixtures (ISC-36/37) follow next slice.
 - 2026-06-25: **Portfolio ships EMPTY, not seeded.** The source single-tenant `/api/portfolio` handler embedded the maintainer's real holdings (from a personal portfolio sync). A recipient fork must never carry personal data → portfolio returns an empty productized snapshot + a "connect your portfolio" empty state. Enforces the "wiped of personal data" + isolation principles. (See the 2026-06-25 template-cleanliness sweep + `scripts/check-template-clean.mjs` guard.)
@@ -225,3 +226,14 @@ P1 Slice 1 (run 2026-06-25, E3) — commit `75769cc`:
 - Auth seam probe: access-env (`ACCESS_TEAM_DOMAIN`+`ACCESS_AUD`) + no token → `getViewer` null (= 401); bare env → open-dev owner.
 - Config probe: `migrateConfig({})` defaults; `migrateConfig({schemaVersion:0,enabled_pages:[...,"FUTURE_PAGE"],theme:"dark"})` → v1, theme kept, FUTURE_PAGE dropped; `migrateConfig(null|"str"|{theme:99})` never throws.
 - UI (real Chrome, Interceptor, against prod preview `vite preview` @ :4173): Home (nav + 2/2 stat cards + welcome + recent projects), `/projects` (2 cards), `/goals` (3 w/ project labels), `/portfolio` ("No portfolio connected" empty state). Dev server (`react-router dev`) has a separate cloudflare-vite-plugin hydration error — prod verified instead (see Decisions).
+
+Block A — Settings + customization (run 2026-06-25, E4) — ISC-33, ISC-34:
+- Render (real Chrome, prod preview): `/settings` a11y tree = 4 toggles (Home `disabled` always-on), theme `<select>`, display-name input, file input, 8 reorder arrows (first ↑ + last ↓ disabled), owner Settings gear in sidebar (`/settings` link present).
+- ISC-34 toggle: DOM-click "Toggle Goals" → re-render `aria-checked=false` → click Save → `GET /api/settings` `pages:[home,projects,portfolio]` (goals dropped, persisted).
+- ISC-34 sidebar: reload `/` → sidebar links = `/,/projects,/portfolio,/settings` (no Goals).
+- ISC-34 route-gating: open `/goals` (disabled) → `location.pathname="/"`, h1 "My Dashboard" (useRequireEnabled redirect).
+- ISC-34 reorder: `PUT page_order:[home,portfolio,projects,...]` → `pages:[home,portfolio,projects]`.
+- ISC-33 import-migrate: `PUT {schemaVersion:0,theme:"dark",display_name:"Imported Fork"}` → config schemaVersion 1, theme dark, name applied.
+- ISC-33 robustness: `PUT {enabled_pages:"not-an-array",theme:99,page_order:{}}` → HTTP 200 (no throw).
+- Forge HIGH fix (live): `PUT {enabled_pages:["projects"]}` (no home) → `enabled_pages:["projects","home"]` (always-on home forced back by normalizeConfig).
+- Build: typecheck EXIT 0, build EXIT 0, check:clean 28 files 0 hits.

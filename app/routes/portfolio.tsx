@@ -1,6 +1,6 @@
 import { LineChart } from "lucide-react";
 import type { Route } from "./+types/portfolio";
-import { usePortfolio } from "../lib/api";
+import { usePortfolio, useRequireEnabled } from "../lib/api";
 import {
   PageHeader,
   EmptyState,
@@ -13,6 +13,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 export default function Portfolio() {
+  useRequireEnabled("portfolio");
   const { data, isLoading, error } = usePortfolio();
 
   return (

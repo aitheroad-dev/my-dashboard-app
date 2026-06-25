@@ -30,6 +30,11 @@ const KNOWN_PAGES = new Set<string>(PAGE_KEYS);
 /** Pages a brand-new fork shows by default (Tools/KB land in P2; off until built). */
 export const DEFAULT_ENABLED: PageKey[] = ["home", "projects", "goals", "portfolio"];
 
+/** Pages that can never be turned off — a fork must always have a landing. Enforced
+ * in normalizeConfig so NO write path (UI save, import, future default) can ship a
+ * fork with no home page. */
+export const ALWAYS_ON_PAGES: PageKey[] = ["home"];
+
 export const ThemeSchema = z.enum(["light", "dark", "system"]).catch("system");
 export type Theme = z.infer<typeof ThemeSchema>;
 
@@ -64,10 +69,16 @@ export function normalizeConfig(parsed: Config): Config {
   const enabled = uniq(parsed.enabled_pages.filter((k) => KNOWN_PAGES.has(k))) as PageKey[];
   const orderKnown = uniq(parsed.page_order.filter((k) => KNOWN_PAGES.has(k))) as PageKey[];
   const order = uniq([...orderKnown, ...PAGE_KEYS]) as PageKey[];
+  const base = enabled.length > 0 ? enabled : [...DEFAULT_ENABLED];
+  // Always-on pages are forced enabled (in page_order position) no matter what was
+  // stored/imported — a fork can never be saved without its landing page.
+  const withAlwaysOn = uniq([
+    ...order.filter((k) => ALWAYS_ON_PAGES.includes(k) || base.includes(k)),
+  ]) as PageKey[];
   return {
     ...parsed,
     schemaVersion: CURRENT_SCHEMA_VERSION,
-    enabled_pages: enabled.length > 0 ? enabled : [...DEFAULT_ENABLED],
+    enabled_pages: withAlwaysOn,
     page_order: order,
   };
 }

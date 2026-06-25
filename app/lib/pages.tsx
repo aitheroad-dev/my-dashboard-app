@@ -31,7 +31,28 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
   kb: { key: "kb", label: "Knowledge Base", path: "/kb", icon: BookOpen },
 };
 
-/** Ordered nav entries from the server-resolved enabled page list. */
+/**
+ * Pages that actually have a wired route. Settings only offers toggles/reorder for
+ * these — so enabling a page can never link the sidebar to a 404. Grows per phase:
+ * P1 = home/projects/goals/portfolio; P2 adds tools/kb.
+ */
+export const BUILT_PAGES: PageKey[] = [
+  "home",
+  "projects",
+  "goals",
+  "portfolio",
+  // P2 adds: "tools", "kb"
+];
+
+/** Pages that can never be turned off (the dashboard always needs a landing). */
+export const ALWAYS_ON: PageKey[] = ["home"];
+
+/** Ordered nav entries from the server-resolved enabled page list. Restricted to
+ * BUILT_PAGES so an enabled-but-not-yet-routed page (e.g. tools/kb before P2, or a
+ * page enabled via an imported config) can never render a sidebar link that 404s. */
 export function navFromPages(pages: PageKey[] | undefined): PageMeta[] {
-  return (pages ?? []).map((k) => PAGE_META[k]).filter(Boolean);
+  return (pages ?? [])
+    .filter((k) => BUILT_PAGES.includes(k))
+    .map((k) => PAGE_META[k])
+    .filter(Boolean);
 }

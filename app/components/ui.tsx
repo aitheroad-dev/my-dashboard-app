@@ -117,6 +117,78 @@ export function EmptyState({
   );
 }
 
+export function Button({
+  children,
+  onClick,
+  type = "button",
+  variant = "primary",
+  disabled,
+  className,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  variant?: "primary" | "secondary" | "ghost";
+  disabled?: boolean;
+  className?: string;
+}) {
+  const styles: Record<string, string> = {
+    primary: "bg-slate-900 text-white hover:bg-slate-700 disabled:bg-slate-300",
+    secondary:
+      "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50",
+    ghost: "text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40",
+  };
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed",
+        styles[variant],
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+        checked ? "bg-slate-900" : "bg-slate-300",
+        disabled && "cursor-not-allowed opacity-50",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+          checked ? "translate-x-5" : "translate-x-0.5",
+        )}
+      />
+    </button>
+  );
+}
+
 export function Loading({ label = "Loading…" }: { label?: string }) {
   return (
     <Card className="flex items-center justify-center gap-3 py-14 text-sm text-slate-500">

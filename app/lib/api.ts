@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { useNavigate } from "react-router";
 import {
   useQuery,
   useMutation,
@@ -138,3 +140,20 @@ export const useUpdateSettings = () => {
     onSuccess: (data) => qc.setQueryData(["settings"], data),
   });
 };
+
+/**
+ * Route-level page gating (ISC-34). If a page is toggled off in Settings, its
+ * route redirects home on next load. The sidebar already hides the link; this
+ * stops a bookmarked/typed URL from reaching a disabled page. Waits for settings
+ * to resolve so we never bounce a page that is actually enabled.
+ */
+export function useRequireEnabled(key: PageKey) {
+  const { data: settings, isLoading, isError } = useSettings();
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (isLoading || isError || !settings) return;
+    if (!settings.pages.includes(key)) {
+      navigate("/", { replace: true });
+    }
+  }, [settings, isLoading, isError, key, navigate]);
+}

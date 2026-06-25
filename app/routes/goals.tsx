@@ -1,6 +1,6 @@
 import { Target } from "lucide-react";
 import type { Route } from "./+types/goals";
-import { useGoals } from "../lib/api";
+import { useGoals, useRequireEnabled } from "../lib/api";
 import {
   PageHeader,
   Card,
@@ -15,6 +15,7 @@ export function meta(_: Route.MetaArgs) {
 }
 
 export default function Goals() {
+  useRequireEnabled("goals");
   const { data, isLoading, error } = useGoals();
 
   return (
