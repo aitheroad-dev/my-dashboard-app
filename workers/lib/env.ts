@@ -29,6 +29,12 @@ export interface AppEnv {
   /** Comma-separated allow-list of authorized emails (owner always included). */
   ACCESS_ALLOWED_EMAILS?: string;
 
+  // ---- Tools ----
+  /** Base URL of the pai-tools service (shared, multi-tenant by key). Overridable
+   * per fork; defaults to the public service. The per-fork pt_ key lives in config
+   * (server-side) and is injected by the /api/tools/* proxy — never sent to the browser. */
+  TOOLS_BASE_URL?: string;
+
   // ---- Agent / MCP seam ----
   /** Scoped per-fork bearer token for the MCP control plane (P3). */
   MCP_BEARER?: string;

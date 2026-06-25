@@ -27,8 +27,16 @@ export type PageKey = (typeof PAGE_KEYS)[number];
 
 const KNOWN_PAGES = new Set<string>(PAGE_KEYS);
 
-/** Pages a brand-new fork shows by default (Tools/KB land in P2; off until built). */
-export const DEFAULT_ENABLED: PageKey[] = ["home", "projects", "goals", "portfolio"];
+/** Pages a brand-new fork shows by default — the six v1 pages (Tools shows a
+ * "not configured" state until the recipient adds their key). */
+export const DEFAULT_ENABLED: PageKey[] = [
+  "home",
+  "projects",
+  "goals",
+  "portfolio",
+  "tools",
+  "kb",
+];
 
 /** Pages that can never be turned off — a fork must always have a landing. Enforced
  * in normalizeConfig so NO write path (UI save, import, future default) can ship a

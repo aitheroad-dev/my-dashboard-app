@@ -11,6 +11,9 @@ export default [
     route("projects", "routes/projects.tsx"),
     route("goals", "routes/goals.tsx"),
     route("portfolio", "routes/portfolio.tsx"),
+    route("tools", "routes/tools.tsx"),
+    route("kb", "routes/kb.tsx"),
+    route("kb-doc/:slug", "routes/kb-doc.tsx"),
     route("settings", "routes/settings.tsx"),
   ]),
 ] satisfies RouteConfig;

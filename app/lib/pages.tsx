@@ -41,7 +41,8 @@ export const BUILT_PAGES: PageKey[] = [
   "projects",
   "goals",
   "portfolio",
-  // P2 adds: "tools", "kb"
+  "tools",
+  "kb",
 ];
 
 /** Pages that can never be turned off (the dashboard always needs a landing). */

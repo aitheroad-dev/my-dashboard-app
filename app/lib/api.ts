@@ -61,8 +61,28 @@ export interface Config {
 
 export interface Settings {
   display_name: string;
-  config: Config;
+  config: Config; // tools_key is always null here — the server redacts it (ISC-39)
   pages: PageKey[];
+  tools_configured: boolean;
+}
+
+export interface KbIndexItem {
+  slug: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface KbDoc {
+  slug: string;
+  title: string;
+  blocks: { blocks: unknown[] };
+  updated_at: string;
+}
+
+export interface ToolsStatus {
+  configured: boolean;
+  valid?: boolean;
+  tools?: { name: string; description: string }[];
 }
 
 export interface Me {
@@ -130,6 +150,25 @@ export const usePortfolio = () =>
   useQuery({
     queryKey: ["portfolio"],
     queryFn: () => apiGet<PortfolioSnapshot>("/api/portfolio"),
+  });
+
+export const useKbIndex = () =>
+  useQuery({
+    queryKey: ["kb"],
+    queryFn: () => apiGet<KbIndexItem[]>("/api/kb"),
+  });
+
+export const useKbDoc = (slug: string | undefined) =>
+  useQuery({
+    queryKey: ["kb", slug],
+    queryFn: () => apiGet<KbDoc>(`/api/kb/${slug}`),
+    enabled: Boolean(slug),
+  });
+
+export const useToolsStatus = () =>
+  useQuery({
+    queryKey: ["tools-status"],
+    queryFn: () => apiGet<ToolsStatus>("/api/tools/status"),
   });
 
 export const useUpdateSettings = () => {

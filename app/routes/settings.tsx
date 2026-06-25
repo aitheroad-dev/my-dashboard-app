@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, ArrowDown, Download, Upload, Save, Settings as SettingsIcon } from "lucide-react";
 import type { Route } from "./+types/settings";
 import {
@@ -38,7 +39,9 @@ export default function Settings() {
   const me = useMe();
   const { data: settings, isLoading, error } = useSettings();
   const save = useUpdateSettings();
+  const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [toolsKey, setToolsKey] = useState("");
 
   // Editable local state, seeded once from the loaded config.
   const [name, setName] = useState("");
@@ -117,6 +120,37 @@ export default function Settings() {
       onSuccess: () => setNotice("Saved."),
       onError: (e) => setNotice(`Save failed: ${(e as Error).message}`),
     });
+  }
+
+  function onConnectTools() {
+    const k = toolsKey.trim();
+    if (!k) return;
+    setNotice(null);
+    save.mutate(
+      { tools_key: k },
+      {
+        onSuccess: () => {
+          setToolsKey("");
+          setNotice("Tools key saved.");
+          qc.invalidateQueries({ queryKey: ["tools-status"] });
+        },
+        onError: (e) => setNotice(`Failed: ${(e as Error).message}`),
+      },
+    );
+  }
+
+  function onDisconnectTools() {
+    setNotice(null);
+    save.mutate(
+      { tools_key: null },
+      {
+        onSuccess: () => {
+          setNotice("Tools disconnected.");
+          qc.invalidateQueries({ queryKey: ["tools-status"] });
+        },
+        onError: (e) => setNotice(`Failed: ${(e as Error).message}`),
+      },
+    );
   }
 
   function onExport() {
@@ -278,6 +312,46 @@ export default function Settings() {
               );
             })}
           </ul>
+        </Card>
+
+        <Card>
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Tools connection
+          </h2>
+          <p className="mb-3 text-sm text-slate-500">
+            Connect pai-tools (image, speech-to-text, text-to-speech, OCR) with your
+            key. The key is stored on the server and is never sent to the browser.
+          </p>
+          <div className="mb-3 text-sm">
+            Status:{" "}
+            {settings.tools_configured ? (
+              <span className="font-medium text-emerald-600">Connected</span>
+            ) : (
+              <span className="text-slate-500">Not connected</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="password"
+              value={toolsKey}
+              onChange={(e) => setToolsKey(e.target.value)}
+              placeholder="pt_…"
+              autoComplete="off"
+              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
+            />
+            <Button
+              variant="secondary"
+              onClick={onConnectTools}
+              disabled={save.isPending || !toolsKey.trim()}
+            >
+              {settings.tools_configured ? "Update key" : "Connect"}
+            </Button>
+            {settings.tools_configured && (
+              <Button variant="ghost" onClick={onDisconnectTools} disabled={save.isPending}>
+                Disconnect
+              </Button>
+            )}
+          </div>
         </Card>
 
         <Card>

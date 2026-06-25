@@ -120,11 +120,28 @@ function safeParse(s: string): unknown {
   }
 }
 
+/**
+ * Client-safe settings view. The per-fork `tools_key` is a SECRET — it must never
+ * reach the browser (ISC-39). We strip it from every response and expose only a
+ * boolean `tools_configured` so the UI can show connected/not-configured without
+ * ever holding the key. The real key stays in D1 and is used only by the
+ * server-side /tools/* proxy.
+ */
+function settingsView(out: { display_name: string; config: Config; pages: string[] }) {
+  const { tools_key, ...rest } = out.config;
+  return {
+    display_name: out.display_name,
+    config: { ...rest, tools_key: null },
+    pages: out.pages,
+    tools_configured: Boolean(tools_key && tools_key.length > 0),
+  };
+}
+
 data.get("/settings", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
   const out = await readConfig(c);
-  return c.json(out);
+  return c.json(settingsView(out));
 });
 
 data.put("/settings", async (c) => {
@@ -158,5 +175,138 @@ data.put("/settings", async (c) => {
           config = ${JSON.stringify(next)},
           updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
   `;
-  return c.json({ display_name: next.display_name, config: next, pages: resolvePages(next) });
+  return c.json(settingsView({ display_name: next.display_name, config: next, pages: resolvePages(next) }));
+});
+
+// ---- Knowledge Base (ISC-40, ISC-41) ----
+
+data.get("/kb", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  const limit = clampLimit(new URL(c.req.url).searchParams.get("limit"));
+  const sql = getDb(c.env);
+  const rows = await sql<{ slug: string; title: string; updated_at: string }>`
+    SELECT slug, title, updated_at FROM kb_docs ORDER BY title ASC LIMIT ${limit}
+  `;
+  return c.json(rows);
+});
+
+data.get("/kb/:slug", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  const slug = c.req.param("slug");
+  const sql = getDb(c.env);
+  const rows = await sql<{ slug: string; title: string; blocks: string; updated_at: string }>`
+    SELECT slug, title, blocks, updated_at FROM kb_docs WHERE slug = ${slug} LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return c.json({ error: "not found" }, 404);
+  let blocks: unknown;
+  try {
+    blocks = JSON.parse(row.blocks);
+  } catch {
+    blocks = { blocks: [] };
+  }
+  return c.json({ slug: row.slug, title: row.title, blocks, updated_at: row.updated_at });
+});
+
+// ---- Tools proxy (ISC-38, ISC-39) ----
+// The per-fork pt_ key lives in config (server-side) and is injected here. It is
+// NEVER returned to the browser; the page calls these same-origin routes.
+
+const TOOLS_BASE_FALLBACK = "https://pai-tools.aitheroad.workers.dev";
+
+function toolsBase(env: AppEnv): string {
+  return (env.TOOLS_BASE_URL || TOOLS_BASE_FALLBACK).replace(/\/+$/, "");
+}
+
+data.get("/tools/status", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  const { config } = await readConfig(c);
+  const key = config.tools_key;
+  if (!key) return c.json({ configured: false });
+
+  const base = toolsBase(c.env);
+  // Public catalog (no auth) for the tool list. Timeout-guarded so a hung upstream
+  // can't stall the Worker request.
+  let tools: Array<{ name: string; description: string }> = [];
+  try {
+    const cat = await fetch(`${base}/`, { signal: AbortSignal.timeout(5000) });
+    if (cat.ok) {
+      const j = (await cat.json()) as {
+        endpoints?: { tools?: Array<{ name: string; description: string }> };
+      };
+      tools = (j.endpoints?.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+      }));
+    }
+  } catch {
+    /* catalog is best-effort */
+  }
+  // Authed key-validity probe (free GET) — owner-only, so a non-owner can't learn
+  // whether the owner's key is valid. The key itself is never returned either way.
+  let valid: boolean | undefined;
+  if (viewer.isOwner) {
+    valid = false;
+    try {
+      const probe = await fetch(`${base}/api/media/list`, {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      valid = probe.ok;
+    } catch {
+      valid = false;
+    }
+  }
+  return c.json({ configured: true, valid, tools });
+});
+
+data.post("/tools/:tool", async (c) => {
+  let viewer;
+  try {
+    viewer = await requireViewer(c.req.raw, c.env);
+  } catch (res) {
+    if (res instanceof Response) return res;
+    throw res;
+  }
+  // Tool calls SPEND the per-fork key (real money/quota). Require a verified CF
+  // Access owner — never open-dev: on a bare workers.dev fork (no Access yet),
+  // open-dev grants owner to every anonymous visitor, so allowing the spend there
+  // would let strangers drain the key. Spending requires real auth, full stop.
+  if (viewer.mode !== "access" || !viewer.isOwner) {
+    return c.json(
+      { error: "Enable Cloudflare Access on this fork to use tools." },
+      403,
+    );
+  }
+  const tool = c.req.param("tool");
+  if (!/^[a-z0-9_-]+$/.test(tool)) return c.json({ error: "bad tool name" }, 400);
+
+  const { config } = await readConfig(c);
+  const key = config.tools_key;
+  if (!key) return c.json({ error: "tools not configured" }, 400);
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+  const base = toolsBase(c.env);
+  const res = await fetch(`${base}/api/${tool}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(60000),
+  });
+  let text = await res.text();
+  // Belt-and-suspenders: never reflect the key back to the browser even if a
+  // buggy/hostile upstream echoed it (ISC-39).
+  if (key && text.includes(key)) text = text.split(key).join("[redacted]");
+  return new Response(text, {
+    status: res.status,
+    headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
+  });
 });
