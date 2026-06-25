@@ -3,11 +3,11 @@ project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
 effort: E3
-phase: verify
+phase: build
 progress: 27/53
 mode: ALGORITHM
 started: 2026-06-24
-updated: 2026-06-24
+updated: 2026-06-25
 ---
 
 # My Dashboard — Project ISA (system of record)
@@ -97,7 +97,13 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [DEFERRED-VERIFY] ISC-30: A CF-Access request from an allow-listed email returns 200 on `/api/me` against a deployed fork. (follow-up: P0-DEPLOY-PROOF)
 
 ### P1 — Easy pages + customization + first-run
-- [ ] ISC-31: Home, Goals, Projects, Portfolio render from ported components + their `/api/*` handlers (DB calls unchanged).
+> ISC-31 split into per-page probes (ID-stability: parent preserved as this header). "Slice 1" = the spine + 4 pages live with empty states + viewer auth; Settings UI export/import (ISC-33) + full toggle round-trip (ISC-34) + migration fixtures (ISC-36/37 tests) follow.
+- [ ] ISC-31: [SPLIT — see ISC-31.1..31.5]
+- [ ] ISC-31.1: `/api/projects` (Hono, `getDb`) returns projects rows; `/projects` page renders them (or styled empty state).
+- [ ] ISC-31.2: `/api/goals` (Hono, `getDb`, project join) returns goals rows; `/goals` page renders them (or empty state).
+- [ ] ISC-31.3: `/api/portfolio` returns an empty productized snapshot (Yaron's personal holdings NOT shipped); `/portfolio` page renders the "connect your portfolio" empty state.
+- [ ] ISC-31.4: `/` Home renders an overview (project/goal counts + nav) from live `/api/*`, never blank.
+- [ ] ISC-31.5: A `getViewer(request, env)` seam gates data endpoints: enforces verified CF Access when the fork configures it, allows owner open-dev when Access is unconfigured (local dev / bare fork). Anti: an Access-configured fork still 401s an unverified request.
 - [ ] ISC-32: Zod `ConfigSchema` with embedded `schemaVersion`, every field `.default()`, and a lazy `migrateConfig(raw)` chain.
 - [ ] ISC-33: Settings UI reads/writes the `settings` row; export = validated blob, import = validate + migrate-to-current.
 - [ ] ISC-34: Page manifest filtered by `enabled_pages` + ordered by `page_order`; toggling a page off removes it from sidebar + routes next load and survives export→fresh-fork→import.
@@ -166,6 +172,10 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 
 ## Decisions
 
+- 2026-06-25: **P1 Slice 1 scope.** P0 closed (ISC-29 deploy-proof verified; ISC-30 CF-Access deferred). This run builds the P1 spine: TanStack Query provider + `app/lib/api.ts` (ISC-23), Zod versioned config (ISC-32), page manifest + sidebar shell (ISC-34 foundation), Hono data handlers + the 4 easy pages with never-blank empty states (ISC-31.1..31.5, 35). Settings export/import UI (ISC-33) + toggle round-trip + migration fixtures (ISC-36/37) follow next slice.
+- 2026-06-25: **Portfolio ships EMPTY, not seeded.** The source `/api/portfolio` handler embeds Yaron's real holdings (SLV/GLDG/… from `pai-portfolio sync`). A recipient fork must never carry his personal data → portfolio returns an empty productized snapshot + a "connect your portfolio" empty state. Enforces the "wiped of personal data" + isolation principles.
+- 2026-06-25: **`getViewer` auth seam (Access-or-open-dev).** Data endpoints can't use bare `requireUser` — on a fork with no CF Access configured (the current live bare-workers.dev fork, and all local dev) it would 401 every page. `getViewer` enforces verified Access when `ACCESS_TEAM_DOMAIN`+`ACCESS_AUD` are set, else grants an owner open-dev viewer. Keeps the gate real where Access exists (ISC-31.5 anti) while letting an unconfigured fork actually show its seeded pages.
+- 2026-06-25: **Single-author slice; Forge as independent hardening pass (delegation show-your-math).** This is a small, tightly-coupled vertical slice (shared `api.ts`/config/manifest contracts). A 2nd concurrent write-agent recreates the concurrent-edit conflict class documented for this lineage ([[feedback_concurrent_edit_commit]]); the parallelizable surface is too small to justify it. Delegation = 1 (Forge runs read-then-fix on the quiet committed tree = cross-vendor independence per Yaron's "same-family review shares blind spots" principle), under the E3 soft floor of 2 by design.
 - 2026-06-24: Repo home = `~/Projects/my-dashboard-app` (fresh dir + fresh git), per Yaron — leaves the set-aside `~/Projects/my-dashboard` clone-fork untouched as reference. GitHub repo name TBD at the deploy-button step.
 - 2026-06-24: Verified the actual template before writing this ISA (cloned `cloudflare/react-router-hono-fullstack-template`, inspected real structure) rather than inferring — Explore's structural details came from the yaron repo, not the template. Real facts: Hono 4.8.2 / RR 7.6.3 / vite 6 / wrangler.jsonc / `workers/app.ts` Hono catch-all / `cloudflare.publish:true` block powers the Deploy button / template's stated UI system is shadcn/ui.
 - 2026-06-24: Server dir = `workers/` (template), so port target is `workers/lib/*`, correcting the plan's `/server/lib/*`.

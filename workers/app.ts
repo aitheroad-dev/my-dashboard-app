@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 import type { AppEnv } from "./lib/env";
 import { runMigrations } from "./lib/migrate";
-import { identifyAccessUser, isOwnerEmail } from "./lib/auth";
+import { getViewer } from "./lib/viewer";
+import { data } from "./api/data";
 
 const app = new Hono<{ Bindings: AppEnv }>();
 
@@ -37,11 +38,18 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
+// Identity via the viewer seam: an Access-configured fork requires a verified
+// allow-listed user (else 401); a fork without Access yet returns the owner in
+// open-dev mode so the dashboard is usable on a bare workers.dev fork / locally.
 app.get("/api/me", async (c) => {
-  const id = await identifyAccessUser(c.req.raw, c.env);
-  if (!id) return c.json({ error: "unauthorized" }, 401);
-  return c.json({ email: id.email, isOwner: isOwnerEmail(id.email, c.env) });
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ email: viewer.email, isOwner: viewer.isOwner, mode: viewer.mode });
 });
+
+// P1 data routes (projects/goals/portfolio/settings). The /api/* migration
+// boot-guard above already ran for these paths; mounted before the SSR catch-all.
+app.route("/api", data);
 
 // React Router SSR catch-all — must stay last.
 app.get("*", (c) => {

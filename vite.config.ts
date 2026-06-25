@@ -11,4 +11,11 @@ export default defineConfig({
     reactRouter(),
     tsconfigPaths(),
   ],
+  // Keep a single React instance across the app + newly-added React-consuming
+  // deps. Without this, Vite's dep-optimizer can split React into two optimized
+  // chunks, leaving react-router's useContext reading a null React (dev-only).
+  resolve: { dedupe: ["react", "react-dom"] },
+  optimizeDeps: {
+    include: ["react", "react-dom", "@tanstack/react-query", "lucide-react"],
+  },
 });
