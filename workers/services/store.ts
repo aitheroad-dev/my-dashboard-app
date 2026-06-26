@@ -191,6 +191,15 @@ export function isValidSlug(slug: string): boolean {
   return SLUG_RE.test(slug);
 }
 
+// Self-defending bounds (Forge audit, low DiI): enforce in the SERVICE so any
+// future caller — not just the MCP zod layer — is protected from oversized writes.
+const MAX_TITLE_LEN = 200;
+const MAX_BLOCKS_BYTES = 256 * 1024;
+function assertWritable(title: string, blocksJson: string): void {
+  if (title.length > MAX_TITLE_LEN) throw new Error(`title too long (max ${MAX_TITLE_LEN} characters)`);
+  if (blocksJson.length > MAX_BLOCKS_BYTES) throw new Error(`blocks too large (max ${MAX_BLOCKS_BYTES} bytes)`);
+}
+
 function nowIso(): string {
   return new Date().toISOString().replace(/\.\d+Z$/, "Z");
 }
@@ -213,6 +222,7 @@ export async function addKbDoc(
   const title = String(input.title ?? "").trim();
   if (!title) throw new Error("title is required");
   const blocksJson = JSON.stringify(normalizeBlocks(input.blocks));
+  assertWritable(title, blocksJson);
   const ts = nowIso();
 
   const existing = await env.DB.prepare("SELECT slug FROM kb_docs WHERE slug = ?").bind(slug).first();
@@ -248,6 +258,7 @@ export async function editKbDoc(
   const title = input.title !== undefined ? String(input.title).trim() : current.title;
   if (!title) throw new Error("title cannot be empty");
   const blocksJson = input.blocks !== undefined ? JSON.stringify(normalizeBlocks(input.blocks)) : current.blocks;
+  assertWritable(title, blocksJson);
   const ts = nowIso();
 
   await env.DB.batch([
