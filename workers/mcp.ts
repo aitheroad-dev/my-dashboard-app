@@ -10,14 +10,25 @@ import {
   publicSettings,
   listKbDocs,
   getKbDoc,
+  addKbDoc,
+  editKbDoc,
+  listMcpActivity,
 } from "./services/store";
 
 /**
- * Read-only MCP control plane (ISC-42). Stateless — no Durable Object — built per
- * request via `createMcpHandler`. Tools call the SAME service functions the HTTP
- * routes use (ISC-45), never internal HTTP. Auth is the scoped per-fork bearer,
- * enforced in app.ts before this handler runs. Guarded WRITE tools land in P3
- * Slice 1 via an McpAgent Durable Object (elicitation + audit).
+ * MCP control plane (ISC-42 reads, ISC-43/45/46 guarded writes). Stateless — built
+ * per request via `createMcpHandler`. Tools call the SAME service functions the
+ * HTTP routes use (ISC-45), never internal HTTP. Auth is the scoped per-fork bearer,
+ * enforced in app.ts before this handler runs.
+ *
+ * Guarded WRITES (add_kb_doc / edit_kb_doc): a write executes ONLY when the caller
+ * passes confirm:true — the ISA's sanctioned confirm-gate fallback for clients
+ * without interactive elicitation. Without it the tool is a no-op preview. Every
+ * successful write commits the data change + exactly one mcp_activity audit row in
+ * one atomic D1 batch (store.ts). Interactive server→client elicitation (McpAgent
+ * Durable Object) is deferred: it needs a stateful transport AND an elicitation-
+ * capable client to exercise, and the DO migration touches the deploy-button
+ * wrangler.jsonc — the confirm-gate satisfies ISC-43/46's verifiable contract today.
  */
 
 function asText(data: unknown) {
@@ -79,6 +90,67 @@ function createReadServer(env: AppEnv): McpServer {
       inputSchema: {},
     },
     async () => asText(publicSettings(await readSettings(env))),
+  );
+
+  // ---- Guarded WRITE tools (P3 Slice 1, ISC-43/46) ----
+  const CONFIRM_HINT =
+    "Not written. This tool changes stored data — re-call with confirm:true to proceed.";
+
+  server.registerTool(
+    "add_kb_doc",
+    {
+      description:
+        "Create a NEW knowledge-base document. GUARDED: nothing is written unless confirm:true is passed (re-call to confirm). Fails if the slug already exists — use edit_kb_doc to change an existing doc.",
+      inputSchema: {
+        slug: z.string().min(1).max(63).describe("URL slug: lowercase letters, numbers, hyphens"),
+        title: z.string().min(1).max(200),
+        blocks: z.any().optional().describe("Blocks JSON: an array of blocks, or {blocks:[...]}"),
+        confirm: z.boolean().optional().describe("Must be true to actually perform the write"),
+      },
+    },
+    async ({ slug, title, blocks, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "add_kb_doc", slug, title, note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ status: "created", ...(await addKbDoc(env, { slug, title, blocks })) });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  server.registerTool(
+    "edit_kb_doc",
+    {
+      description:
+        "Edit an EXISTING knowledge-base document's title and/or blocks. GUARDED: nothing is written unless confirm:true is passed. Fails if the slug does not exist.",
+      inputSchema: {
+        slug: z.string().min(1).max(63),
+        title: z.string().min(1).max(200).optional(),
+        blocks: z.any().optional().describe("Replacement blocks JSON: an array, or {blocks:[...]}"),
+        confirm: z.boolean().optional().describe("Must be true to actually perform the write"),
+      },
+    },
+    async ({ slug, title, blocks, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "edit_kb_doc", slug, note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ status: "updated", ...(await editKbDoc(env, { slug, title, blocks })) });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_mcp_activity",
+    {
+      description: "List recent MCP write-tool audit entries (most recent first) — the write trail.",
+      inputSchema: { limit: z.number().int().positive().max(200).optional() },
+    },
+    async ({ limit }) => asText(await listMcpActivity(env, limit ?? 50)),
   );
 
   return server;

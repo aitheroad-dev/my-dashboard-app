@@ -170,3 +170,104 @@ export async function getKbDoc(env: AppEnv, slug: string): Promise<KbDoc | null>
   }
   return { slug: row.slug, title: row.title, blocks, updated_at: row.updated_at };
 }
+
+// ---- Knowledge Base WRITES + MCP audit (P3 Slice 1, ISC-43/46) ----
+
+export type BlocksDoc = { blocks: unknown[] };
+
+/** Coerce arbitrary input into the stored {blocks:[...]} shape. Accepts a bare
+ * array (used as the blocks list) or an object with a `blocks` array; anything
+ * else becomes an empty list. Never throws — the BlockRenderer is XSS-safe. */
+export function normalizeBlocks(input: unknown): BlocksDoc {
+  if (Array.isArray(input)) return { blocks: input };
+  if (input && typeof input === "object" && Array.isArray((input as { blocks?: unknown }).blocks)) {
+    return { blocks: (input as { blocks: unknown[] }).blocks };
+  }
+  return { blocks: [] };
+}
+
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export function isValidSlug(slug: string): boolean {
+  return SLUG_RE.test(slug);
+}
+
+function nowIso(): string {
+  return new Date().toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+export type KbWriteResult = { slug: string; title: string; updated_at: string; created: boolean };
+
+/**
+ * Create a NEW kb doc AND write exactly one mcp_activity row in ONE atomic D1
+ * batch (both commit or neither — so audit-row-count == successful-writes by
+ * construction). Throws on slug conflict (no audit row for a no-op) — callers use
+ * editKbDoc to change an existing doc.
+ */
+export async function addKbDoc(
+  env: AppEnv,
+  input: { slug: string; title: string; blocks?: unknown },
+  actor = "mcp-bearer",
+): Promise<KbWriteResult> {
+  const slug = String(input.slug ?? "").trim().toLowerCase();
+  if (!isValidSlug(slug)) throw new Error(`invalid slug "${input.slug}" (use lowercase letters, numbers, hyphens)`);
+  const title = String(input.title ?? "").trim();
+  if (!title) throw new Error("title is required");
+  const blocksJson = JSON.stringify(normalizeBlocks(input.blocks));
+  const ts = nowIso();
+
+  const existing = await env.DB.prepare("SELECT slug FROM kb_docs WHERE slug = ?").bind(slug).first();
+  if (existing) throw new Error(`a doc with slug "${slug}" already exists; use edit_kb_doc`);
+
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO kb_docs (slug, title, blocks, updated_at) VALUES (?, ?, ?, ?)").bind(
+      slug, title, blocksJson, ts,
+    ),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "add_kb_doc", slug, actor, `Created KB doc "${title}"`, ts,
+    ),
+  ]);
+  return { slug, title, updated_at: ts, created: true };
+}
+
+/**
+ * Update an EXISTING kb doc (title and/or blocks) AND write exactly one audit row,
+ * atomically. Throws if the slug does not exist (no audit row for a no-op).
+ */
+export async function editKbDoc(
+  env: AppEnv,
+  input: { slug: string; title?: string; blocks?: unknown },
+  actor = "mcp-bearer",
+): Promise<KbWriteResult> {
+  const slug = String(input.slug ?? "").trim().toLowerCase();
+  const current = await env.DB
+    .prepare("SELECT slug, title, blocks FROM kb_docs WHERE slug = ?")
+    .bind(slug)
+    .first<{ slug: string; title: string; blocks: string }>();
+  if (!current) throw new Error(`no doc with slug "${slug}"; use add_kb_doc to create it`);
+
+  const title = input.title !== undefined ? String(input.title).trim() : current.title;
+  if (!title) throw new Error("title cannot be empty");
+  const blocksJson = input.blocks !== undefined ? JSON.stringify(normalizeBlocks(input.blocks)) : current.blocks;
+  const ts = nowIso();
+
+  await env.DB.batch([
+    env.DB.prepare("UPDATE kb_docs SET title = ?, blocks = ?, updated_at = ? WHERE slug = ?").bind(
+      title, blocksJson, ts, slug,
+    ),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "edit_kb_doc", slug, actor, `Edited KB doc "${title}"`, ts,
+    ),
+  ]);
+  return { slug, title, updated_at: ts, created: false };
+}
+
+export type McpActivityRow = {
+  id: number; ts: string; tool: string; target: string | null; actor: string; summary: string | null;
+};
+
+export async function listMcpActivity(env: AppEnv, limit = 50): Promise<McpActivityRow[]> {
+  const sql = getDb(env);
+  return sql<McpActivityRow>`
+    SELECT id, ts, tool, target, actor, summary FROM mcp_activity ORDER BY id DESC LIMIT ${limit}
+  `;
+}

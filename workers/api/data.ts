@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../lib/env";
 import { getViewer, requireViewer } from "../lib/viewer";
+import { runAssistant } from "../services/assistant";
 import {
   clampLimit,
   listProjects,
@@ -187,4 +188,33 @@ data.post("/tools/:tool", async (c) => {
     status: res.status,
     headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
   });
+});
+
+// Built-in Assistant (ISC-44). Runs model inference grounded in this fork's data.
+// Owner-gated + verified Access only (never open-dev) — same posture as tool spend:
+// a bare workers.dev fork must not let anonymous visitors drive inference.
+data.post("/assistant", async (c) => {
+  let viewer;
+  try {
+    viewer = await requireViewer(c.req.raw, c.env);
+  } catch (res) {
+    if (res instanceof Response) return res;
+    throw res;
+  }
+  if (viewer.mode !== "access" || !viewer.isOwner) {
+    return c.json({ error: "Enable Cloudflare Access on this fork to use the assistant." }, 403);
+  }
+  let body: { question?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+  const question = String(body.question ?? "").slice(0, 4000).trim();
+  if (!question) return c.json({ error: "Ask a question." }, 400);
+  try {
+    return c.json(await runAssistant(c.env, question));
+  } catch (e) {
+    return c.json({ error: `assistant failed: ${(e as Error).message}` }, 502);
+  }
 });

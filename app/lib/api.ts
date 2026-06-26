@@ -43,11 +43,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiGet = <T>(path: string) => request<T>(path);
 export const apiPut = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
+export const apiPost = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
 // ---- Shared types (mirror the server shapes) ----
 
 export type Theme = "light" | "dark" | "system";
-export type PageKey = "home" | "projects" | "goals" | "portfolio" | "tools" | "kb";
+export type PageKey = "home" | "projects" | "goals" | "portfolio" | "tools" | "kb" | "assistant";
 
 export interface Config {
   schemaVersion: number;

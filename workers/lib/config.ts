@@ -22,6 +22,7 @@ export const PAGE_KEYS = [
   "portfolio",
   "tools",
   "kb",
+  "assistant",
 ] as const;
 export type PageKey = (typeof PAGE_KEYS)[number];
 
@@ -36,6 +37,7 @@ export const DEFAULT_ENABLED: PageKey[] = [
   "portfolio",
   "tools",
   "kb",
+  "assistant",
 ];
 
 /** Pages that can never be turned off — a fork must always have a landing. Enforced

@@ -5,6 +5,7 @@ import {
   LineChart,
   Wrench,
   BookOpen,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { PageKey } from "./api";
@@ -29,6 +30,7 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
   portfolio: { key: "portfolio", label: "Portfolio", path: "/portfolio", icon: LineChart },
   tools: { key: "tools", label: "Tools", path: "/tools", icon: Wrench },
   kb: { key: "kb", label: "Knowledge Base", path: "/kb", icon: BookOpen },
+  assistant: { key: "assistant", label: "Assistant", path: "/assistant", icon: Sparkles },
 };
 
 /**
@@ -43,6 +45,7 @@ export const BUILT_PAGES: PageKey[] = [
   "portfolio",
   "tools",
   "kb",
+  "assistant",
 ];
 
 /** Pages that can never be turned off (the dashboard always needs a landing). */

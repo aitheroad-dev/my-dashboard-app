@@ -38,4 +38,14 @@ export interface AppEnv {
   // ---- Agent / MCP seam ----
   /** Scoped per-fork bearer token for the MCP control plane (P3). */
   MCP_BEARER?: string;
+
+  // ---- Assistant (P3 Slice 2, ISC-44) ----
+  /** Workers AI text model id for the assistant (default: a Llama instruct model). */
+  ASSISTANT_MODEL?: string;
+  /** Opt-in: Anthropic API key — used ONLY server-side via AI Gateway, never sent to the browser. */
+  ANTHROPIC_API_KEY?: string;
+  /** Opt-in: Cloudflare AI Gateway base URL
+   *  (https://gateway.ai.cloudflare.com/v1/<account>/<gateway>); Anthropic is called
+   *  at <base>/anthropic/v1/messages. Required alongside ANTHROPIC_API_KEY. */
+  AI_GATEWAY_BASE_URL?: string;
 }
