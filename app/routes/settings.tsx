@@ -41,7 +41,7 @@ export default function Settings() {
   const save = useUpdateSettings();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [toolsKey, setToolsKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
 
   // Editable local state, seeded once from the loaded config.
   const [name, setName] = useState("");
@@ -122,16 +122,16 @@ export default function Settings() {
     });
   }
 
-  function onConnectTools() {
-    const k = toolsKey.trim();
+  function onSaveOpenAI() {
+    const k = openaiKey.trim();
     if (!k) return;
     setNotice(null);
     save.mutate(
-      { tools_key: k },
+      { openai_key: k },
       {
         onSuccess: () => {
-          setToolsKey("");
-          setNotice("Tools key saved.");
+          setOpenaiKey("");
+          setNotice("OpenAI key saved — multilingual text-to-speech is on.");
           qc.invalidateQueries({ queryKey: ["tools-status"] });
         },
         onError: (e) => setNotice(`Failed: ${(e as Error).message}`),
@@ -139,13 +139,13 @@ export default function Settings() {
     );
   }
 
-  function onDisconnectTools() {
+  function onRemoveOpenAI() {
     setNotice(null);
     save.mutate(
-      { tools_key: null },
+      { openai_key: null },
       {
         onSuccess: () => {
-          setNotice("Tools disconnected.");
+          setNotice("OpenAI key removed — text-to-speech is now English-only.");
           qc.invalidateQueries({ queryKey: ["tools-status"] });
         },
         onError: (e) => setNotice(`Failed: ${(e as Error).message}`),
@@ -316,39 +316,41 @@ export default function Settings() {
 
         <Card>
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Tools connection
+            Text-to-speech language (optional)
           </h2>
           <p className="mb-3 text-sm text-slate-500">
-            Connect pai-tools (image, speech-to-text, text-to-speech, OCR) with your
-            key. The key is stored on the server and is never sent to the browser.
+            Image, speech-to-text and read-text run in your dashboard automatically — no
+            setup. Text-to-speech reads English out of the box; add an OpenAI key for
+            Hebrew and other languages. The key is stored on the server and never sent to
+            the browser.
           </p>
           <div className="mb-3 text-sm">
             Status:{" "}
-            {settings.tools_configured ? (
-              <span className="font-medium text-emerald-600">Connected</span>
+            {settings.openai_configured ? (
+              <span className="font-medium text-emerald-600">Multilingual (OpenAI key set)</span>
             ) : (
-              <span className="text-slate-500">Not connected</span>
+              <span className="text-slate-500">English only</span>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <input
               type="password"
-              value={toolsKey}
-              onChange={(e) => setToolsKey(e.target.value)}
-              placeholder="pt_…"
+              value={openaiKey}
+              onChange={(e) => setOpenaiKey(e.target.value)}
+              placeholder="sk-…"
               autoComplete="off"
               className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900"
             />
             <Button
               variant="secondary"
-              onClick={onConnectTools}
-              disabled={save.isPending || !toolsKey.trim()}
+              onClick={onSaveOpenAI}
+              disabled={save.isPending || !openaiKey.trim()}
             >
-              {settings.tools_configured ? "Update key" : "Connect"}
+              {settings.openai_configured ? "Update key" : "Save key"}
             </Button>
-            {settings.tools_configured && (
-              <Button variant="ghost" onClick={onDisconnectTools} disabled={save.isPending}>
-                Disconnect
+            {settings.openai_configured && (
+              <Button variant="ghost" onClick={onRemoveOpenAI} disabled={save.isPending}>
+                Remove
               </Button>
             )}
           </div>

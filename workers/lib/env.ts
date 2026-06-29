@@ -29,11 +29,11 @@ export interface AppEnv {
   /** Comma-separated allow-list of authorized emails (owner always included). */
   ACCESS_ALLOWED_EMAILS?: string;
 
-  // ---- Tools ----
-  /** Base URL of the pai-tools service (shared, multi-tenant by key). Overridable
-   * per fork; defaults to the public service. The per-fork pt_ key lives in config
-   * (server-side) and is injected by the /api/tools/* proxy — never sent to the browser. */
-  TOOLS_BASE_URL?: string;
+  // ---- Tools (native; run on this fork's own AI binding) ----
+  /** Optional OpenAI key for multilingual (incl. Hebrew) text-to-speech, used ONLY
+   * server-side, never sent to the browser. A per-fork `config.openai_key` (Settings)
+   * takes precedence; this secret is the fork-wide fallback. Absent → English MeloTTS. */
+  OPENAI_API_KEY?: string;
 
   // ---- Agent / MCP seam ----
   /** Scoped per-fork bearer token for the MCP control plane (P3). */

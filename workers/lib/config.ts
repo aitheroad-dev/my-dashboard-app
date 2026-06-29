@@ -60,7 +60,13 @@ export const ConfigSchema = z.object({
   // 500-ing /api/settings (invariant: an old/garbage config never throws).
   enabled_pages: z.array(z.string()).catch([...DEFAULT_ENABLED]).default([...DEFAULT_ENABLED]),
   page_order: z.array(z.string()).catch([...PAGE_KEYS]).default([...PAGE_KEYS]),
+  // tools_key: DEPRECATED (the pai-tools proxy was removed 2026-06-29 — tools run
+  // natively now). Kept in the schema so an old stored config never throws; unused.
   tools_key: z.string().nullable().catch(null).default(null),
+  // Optional OpenAI key for multilingual (incl. Hebrew) text-to-speech. Stored
+  // server-side in this fork's own D1, redacted from every client response, never
+  // sent to the browser. Absent → TTS falls back to Workers AI MeloTTS (English).
+  openai_key: z.string().nullable().catch(null).default(null),
   prefs: z.record(z.string(), z.unknown()).catch({}).default({}),
 });
 

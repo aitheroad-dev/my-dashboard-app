@@ -134,12 +134,15 @@ export async function writeSettings(env: AppEnv, patch: unknown): Promise<Settin
 /** Client-safe settings view — NEVER leaks tools_key (ISC-39). Used by both the
  * HTTP /settings routes and the MCP get_settings tool. */
 export function publicSettings(out: SettingsOut) {
-  const { tools_key, ...rest } = out.config;
+  // Strip every server-side secret from the client view (ISC-39): the deprecated
+  // tools_key and the optional openai_key are NEVER sent to the browser.
+  const { tools_key, openai_key, ...rest } = out.config;
   return {
     display_name: out.display_name,
-    config: { ...rest, tools_key: null },
+    config: { ...rest, tools_key: null, openai_key: null },
     pages: out.pages,
     tools_configured: Boolean(tools_key && tools_key.length > 0),
+    openai_configured: Boolean(openai_key && openai_key.length > 0),
   };
 }
 

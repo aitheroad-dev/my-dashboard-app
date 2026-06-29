@@ -13,6 +13,17 @@ import {
   listKbDocs,
   getKbDoc,
 } from "../services/store";
+import {
+  toolsStatus,
+  generateImage,
+  transcribe,
+  ocr,
+  synthesize,
+  listImages,
+  listVoice,
+  getMedia,
+  ToolError,
+} from "../services/tools";
 
 /**
  * HTTP `/api/*` routes — thin handlers over the shared service layer
@@ -89,203 +100,105 @@ data.get("/kb/:slug", async (c) => {
   return c.json(doc);
 });
 
-// ---- Tools proxy (ISC-38, ISC-39) ----
-// The per-fork pt_ key lives in config (server-side) and is injected here. It is
-// NEVER returned to the browser; the page calls these same-origin routes.
-
-const TOOLS_BASE_FALLBACK = "https://pai-tools.aitheroad.workers.dev";
-
-function toolsBase(env: AppEnv): string {
-  const raw = (env.TOOLS_BASE_URL || TOOLS_BASE_FALLBACK).replace(/\/+$/, "");
-  // The per-fork key rides on requests to this base — require a valid https URL
-  // (deploy-controlled, but harden defensively); fall back to the known host (L2).
-  try {
-    if (new URL(raw).protocol === "https:") return raw;
-  } catch {
-    /* malformed override */
-  }
-  return TOOLS_BASE_FALLBACK;
-}
-
-// UUID-ish media id guard (M4) — upstream-derived; reject anything else before
-// it becomes a media URL or a React key.
-function isMediaId(id: unknown): id is string {
-  return typeof id === "string" && /^[a-f0-9-]{8,}$/i.test(id);
-}
+// ---- Tools (native, ISC-54.x rebuild 2026-06-29) ----
+// The tools run IN this worker on the fork's own `env.AI` (+ OpenAI for TTS) — no
+// pai-tools, no key in the browser, no worker→worker hop (kills CF error 1042).
+// Gated by the dashboard's own CF Access (the caller is already signed in); media
+// lives in this fork's own KV. Logic in workers/services/tools.ts.
 
 data.get("/tools/status", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
   const { config } = await readSettings(c.env);
-  const key = config.tools_key;
-  if (!key) return c.json({ configured: false });
-
-  const base = toolsBase(c.env);
-  // Public catalog (no auth) for the tool list. Timeout-guarded so a hung upstream
-  // can't stall the Worker request.
-  let tools: Array<{ name: string; description: string }> = [];
-  try {
-    const cat = await fetch(`${base}/`, { signal: AbortSignal.timeout(5000) });
-    if (cat.ok) {
-      const j = (await cat.json()) as {
-        endpoints?: { tools?: Array<{ name: string; description: string }> };
-      };
-      tools = (j.endpoints?.tools ?? []).map((t) => ({
-        name: t.name,
-        description: t.description,
-      }));
-    }
-  } catch {
-    /* catalog is best-effort */
-  }
-  // Authed key-validity probe (free GET) — owner-only, so a non-owner can't learn
-  // whether the owner's key is valid. The key itself is never returned either way.
-  let valid: boolean | undefined;
-  if (viewer.isOwner) {
-    valid = false;
-    try {
-      const probe = await fetch(`${base}/api/media/list`, {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(5000),
-      });
-      valid = probe.ok;
-    } catch {
-      valid = false;
-    }
-  }
-  return c.json({ configured: true, valid, tools });
+  // `ready` tracks whether this viewer can actually run the tools (all tool routes
+  // are owner-gated) — so the page shows an honest state on an open-dev fork.
+  const canUse = viewer.mode === "access" && viewer.isOwner;
+  return c.json(toolsStatus(c.env, config.openai_key, canUse));
 });
 
-// ---- Tool galleries (owner-only, read-only) ----
-// Surfaces the fork owner's own generated media so the workspace feels inhabited.
-// Read-only + free (no spend) → owner gate is enough (lighter than the spend path).
-// The key is injected server-side; the public media URLs (unguessable UUID = the
-// capability) are constructed here so the browser can render them without the key.
+// ---- Tool galleries (owner-only) — this fork's OWN generated media ----
 data.get("/tools/media/list", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  // Match the spend route's posture (advisor 2026-06-29): never open-dev. On a
-  // bare workers.dev fork, open-dev grants owner to every anonymous visitor, so
-  // a looser gate would leak the owner's generated media. Require verified Access.
   if (viewer.mode !== "access" || !viewer.isOwner)
-    return c.json({ error: "Enable Cloudflare Access on this fork to view the gallery." }, 403);
-  const { config } = await readSettings(c.env);
-  const key = config.tools_key;
-  if (!key) return c.json({ items: [] });
-  const base = toolsBase(c.env);
-  try {
-    const r = await fetch(`${base}/api/media/list`, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    // Surface a real error so the client can distinguish "broken" from "empty" (M5).
-    if (!r.ok) return c.json({ error: "gallery upstream error" }, 502);
-    let text = await r.text();
-    // Redaction parity with the spend route (M1) — never reflect the key.
-    if (key && text.includes(key)) text = text.split(key).join("[redacted]");
-    const j = JSON.parse(text) as {
-      items?: Array<{ id?: string; prompt?: string; quality?: string; ts?: number }>;
-    };
-    const items = (j.items ?? [])
-      .filter((it) => isMediaId(it.id))
-      .map((it) => ({
-        id: it.id as string,
-        prompt: it.prompt ?? "",
-        quality: it.quality ?? "",
-        ts: it.ts ?? 0,
-        img_url: `${base}/img/${encodeURIComponent(it.id as string)}`,
-      }));
-    return c.json({ items });
-  } catch {
-    return c.json({ error: "gallery unavailable" }, 502);
-  }
+    return c.json({ error: "Sign in to this dashboard to view your gallery." }, 403);
+  return c.json(await listImages(c.env));
 });
 
 data.get("/tools/voice/list", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  // Match the spend route's posture (advisor 2026-06-29): never open-dev. On a
-  // bare workers.dev fork, open-dev grants owner to every anonymous visitor, so
-  // a looser gate would leak the owner's generated media. Require verified Access.
   if (viewer.mode !== "access" || !viewer.isOwner)
-    return c.json({ error: "Enable Cloudflare Access on this fork to view the gallery." }, 403);
-  const { config } = await readSettings(c.env);
-  const key = config.tools_key;
-  if (!key) return c.json({ items: [], ttl_days: 14 });
-  const base = toolsBase(c.env);
-  try {
-    const r = await fetch(`${base}/api/voice/list`, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) return c.json({ error: "gallery upstream error" }, 502); // M5
-    let text = await r.text();
-    if (key && text.includes(key)) text = text.split(key).join("[redacted]"); // M1
-    const j = JSON.parse(text) as {
-      items?: Array<{ id?: string; text?: string; engine?: string; ts?: number }>;
-      ttl_days?: number;
-    };
-    const items = (j.items ?? [])
-      .filter((it) => isMediaId(it.id))
-      .map((it) => ({
-        id: it.id as string,
-        text: it.text ?? "",
-        engine: it.engine ?? "",
-        ts: it.ts ?? 0,
-        audio_url: `${base}/audio/${encodeURIComponent(it.id as string)}`,
-      }));
-    return c.json({ items, ttl_days: j.ttl_days ?? 14 });
-  } catch {
-    return c.json({ error: "gallery unavailable" }, 502);
-  }
+    return c.json({ error: "Sign in to this dashboard to view your gallery." }, 403);
+  return c.json(await listVoice(c.env));
 });
 
+// Serve this fork's own generated media from KV (owner-only; the browser's
+// same-origin <img>/<audio> requests carry the CF Access cookie, so they're authed).
+data.get("/tools/media/:kind/:id", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  if (viewer.mode !== "access" || !viewer.isOwner) return c.json({ error: "forbidden" }, 403);
+  const kind = c.req.param("kind");
+  if (kind !== "img" && kind !== "audio") return c.json({ error: "not found" }, 404);
+  const media = await getMedia(c.env, kind, c.req.param("id"));
+  if (!media) return c.json({ error: "not found" }, 404);
+  return new Response(media.body, {
+    headers: {
+      "content-type": media.contentType,
+      "cache-control": "private, max-age=86400",
+      "x-content-type-options": "nosniff",
+    },
+  });
+});
+
+// Run a tool natively. Never open-dev: a bare workers.dev fork would otherwise let
+// any anonymous visitor spend the fork's own AI quota. The caller is already signed
+// into the dashboard via CF Access — that IS the auth.
 data.post("/tools/:tool", async (c) => {
-  let viewer;
-  try {
-    viewer = await requireViewer(c.req.raw, c.env);
-  } catch (res) {
-    if (res instanceof Response) return res;
-    throw res;
-  }
-  // Tool calls SPEND the per-fork key (real money/quota). Require a verified CF
-  // Access owner — never open-dev: on a bare workers.dev fork (no Access yet),
-  // open-dev grants owner to every anonymous visitor, so allowing the spend there
-  // would let strangers drain the key. Spending requires real auth, full stop.
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
   if (viewer.mode !== "access" || !viewer.isOwner) {
-    return c.json(
-      { error: "Enable Cloudflare Access on this fork to use tools." },
-      403,
-    );
+    return c.json({ error: "Sign in to this dashboard (Cloudflare Access) to use the tools." }, 403);
   }
   const tool = c.req.param("tool");
-  if (!/^[a-z0-9_-]+$/.test(tool)) return c.json({ error: "bad tool name" }, 400);
-
-  const { config } = await readSettings(c.env);
-  const key = config.tools_key;
-  if (!key) return c.json({ error: "tools not configured" }, 400);
-
-  let body: unknown;
+  let body: Record<string, unknown>;
   try {
-    body = await c.req.json();
+    body = (await c.req.json()) as Record<string, unknown>;
   } catch {
     body = {};
   }
-  const base = toolsBase(c.env);
-  const res = await fetch(`${base}/api/${tool}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-    signal: AbortSignal.timeout(60000),
-  });
-  let text = await res.text();
-  // Belt-and-suspenders: never reflect the key back to the browser even if a
-  // buggy/hostile upstream echoed it (ISC-39).
-  if (key && text.includes(key)) text = text.split(key).join("[redacted]");
-  return new Response(text, {
-    status: res.status,
-    headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
-  });
+  const { config } = await readSettings(c.env);
+  try {
+    let result: Record<string, unknown>;
+    switch (tool) {
+      case "flux":
+        result = await generateImage(c.env, body);
+        break;
+      case "whisper":
+        result = await transcribe(c.env, body);
+        break;
+      case "ocr":
+        result = await ocr(c.env, body);
+        break;
+      case "tts":
+        result = await synthesize(c.env, config.openai_key, body);
+        break;
+      default:
+        return c.json({ error: `unknown tool: ${tool}` }, 404);
+    }
+    return c.json(result);
+  } catch (e) {
+    if (e instanceof ToolError) {
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: e.status,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    // Unexpected (non-ToolError) failure: don't leak the raw internal message —
+    // every meaningful client-input error is already a ToolError(400).
+    return c.json({ error: "The tool failed unexpectedly. Please try again." }, 502);
+  }
 });
 
 // Built-in Assistant (ISC-44). Runs model inference grounded in this fork's data.

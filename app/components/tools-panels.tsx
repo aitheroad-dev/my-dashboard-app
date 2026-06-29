@@ -27,9 +27,10 @@ import {
 } from "../lib/api";
 
 /**
- * Tools workspace (ISC-54.x) — the functional home where the fork's tools are
- * actually USED, not just listed. Each panel calls the server-side proxy
- * (`/api/tools/:tool`); the pai-tools key never reaches the browser (ISC-39/60).
+ * Tools workspace (ISC-54.x / ISC-62) — the functional home where the fork's
+ * tools are actually USED, not just listed. Each panel POSTs to the native
+ * `/api/tools/:tool` routes, which run the model on this fork's own `env.AI`
+ * (TTS optionally via a server-side OpenAI key) — no proxy, no key in the browser.
  *
  * Design (FirstPrinciples): zero setup + sensible defaults, one calm sectioned
  * surface, input → visible output in place (never raw base64/JSON), honest

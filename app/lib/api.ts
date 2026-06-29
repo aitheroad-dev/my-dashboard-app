@@ -57,15 +57,17 @@ export interface Config {
   theme: Theme;
   enabled_pages: PageKey[];
   page_order: PageKey[];
-  tools_key: string | null;
+  tools_key: string | null; // deprecated (pai-tools removed); always null to the client
+  openai_key: string | null; // optional, server-side only — for multilingual TTS
   prefs: Record<string, unknown>;
 }
 
 export interface Settings {
   display_name: string;
-  config: Config; // tools_key is always null here — the server redacts it (ISC-39)
+  config: Config; // tools_key + openai_key are always null here — server-redacted (ISC-39)
   pages: PageKey[];
-  tools_configured: boolean;
+  tools_configured: boolean; // deprecated
+  openai_configured: boolean; // an OpenAI key is set → multilingual TTS available
 }
 
 export interface KbIndexItem {
@@ -82,12 +84,12 @@ export interface KbDoc {
 }
 
 export interface ToolsStatus {
-  configured: boolean;
-  valid?: boolean;
-  tools?: { name: string; description: string }[];
+  ready: boolean; // this viewer can run the tools (CF-Access owner; routes are owner-gated)
+  tts_multilingual: boolean; // an OpenAI key is set → TTS does Hebrew/etc.
+  tools: { name: string; description: string }[];
 }
 
-// ---- Tool result shapes (mirror pai-tools `/api/<tool>` → `result.data`) ----
+// ---- Tool result shapes (returned by the native `/api/tools/:tool` routes) ----
 
 export interface FluxResult {
   image_url: string;
@@ -211,9 +213,10 @@ export const useToolsStatus = () =>
   });
 
 /**
- * Invoke a tool through the server-side proxy (ISC-54.x). The per-fork pt_ key is
- * injected by the Worker; it never reaches the browser. Returns pai-tools'
- * unwrapped `result.data`; a non-2xx surfaces its `{error}` via ApiError.
+ * Invoke a tool natively (ISC-62). The Worker runs the model on THIS fork's own
+ * `env.AI` binding (TTS optionally via a server-side OpenAI key) — no proxy, no
+ * key in the browser, gated by the dashboard's own CF Access. Returns the tool's
+ * result object; a non-2xx surfaces its `{error}` via ApiError.
  */
 export const callTool = <T>(tool: string, body: unknown) =>
   apiPost<T>(`/api/tools/${tool}`, body);
