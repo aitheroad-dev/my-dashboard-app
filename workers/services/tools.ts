@@ -243,8 +243,9 @@ export async function synthesize(
       signal: AbortSignal.timeout(60000),
     });
     if (!r.ok) {
-      const t = await r.text();
-      throw new ToolError(502, `Text-to-speech failed (HTTP ${r.status}): ${t.slice(0, 160)}`);
+      // Don't pass the upstream provider's error body to the client (info hygiene);
+      // the status code is enough for the user, the rest is for server logs.
+      throw new ToolError(502, `Text-to-speech failed (HTTP ${r.status}). Please try again.`);
     }
     bytes = new Uint8Array(await r.arrayBuffer());
     contentType = "audio/mpeg";
