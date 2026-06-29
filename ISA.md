@@ -3,11 +3,11 @@ project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
 effort: E4
-phase: verify
-progress: 49/57
+phase: execute
+progress: 50/66
 mode: ALGORITHM
 started: 2026-06-24
-updated: 2026-06-25
+updated: 2026-06-29
 ---
 
 # My Dashboard — Project ISA (system of record)
@@ -136,6 +136,18 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 
 ### Cross-cutting
 - [ ] ISC-53: Anti: no recipient fork can read or write another fork's D1/R2 (no shared binding, no cross-fork query path exists).
+
+### Tools Workspace (functional home) — built 2026-06-29
+> Promotes the Tools page from catalog-embed (ISC-38) to a functional workspace where the fork's tools are actually USED. FirstPrinciples UX: zero setup, one calm sectioned surface, input→visible output in place, honest waiting/failure, gallery memory, graceful gate. Access model = inside the gated fork (Yaron's pick 2026-06-29). Reuses the existing server-side `/api/tools/:tool` proxy (key never to browser).
+- [ ] ISC-54: Tools page renders a sectioned workspace (Image · Speak→Text · Text→Speech · Read Text · Gallery) when a key is configured; not-configured → graceful "Open Settings" gate; key-rejected → amber banner. CODE COMPLETE (tools.tsx + tools-panels.tsx, tsc+build green); live render [DEFERRED-VERIFY → ISC-62 deploy].
+- [ ] ISC-55: Image: prompt (+high/fast) → POST /api/tools/flux → inline `<img>` (data:image/jpeg) + Download. CONTRACT VERIFIED (live flux → {image_url,image_base64,prompt,quality}, base64=JPEG `/9j/`); render [DEFERRED-VERIFY → ISC-62].
+- [ ] ISC-56: Text→Speech: text (+voice) → /api/tools/tts → inline `<audio>`(audio_file) autoplay + open/download. CONTRACT VERIFIED (live tts → {play_url,audio_file,engine,chars}); render [DEFERRED-VERIFY → ISC-62].
+- [ ] ISC-57: Speak→Text: mic record → 16-bit PCM mono WAV → /api/tools/whisper, OR audio upload; → transcript + Copy + detected language. CONTRACT VERIFIED (whisper → {text,word_count,language}); live mic [DEFERRED-VERIFY → ISC-62].
+- [ ] ISC-58: Read Text: photo upload → base64 → /api/tools/ocr → extracted text + Copy + preview. CONTRACT VERIFIED (ocr → {text}); render [DEFERRED-VERIFY → ISC-62].
+- [ ] ISC-59: Gallery: owner-gated GET /api/tools/media/list + /voice/list proxies return items enriched with server-built img_url/audio_url (key injected server-side); panel renders image grid + clip players. CONTRACT VERIFIED (live media/list → {items:[{id,prompt,quality,ts}]}, voice/list → {items:[{id,text,engine,ts}],ttl_days}); render [DEFERRED-VERIFY → ISC-62].
+- [x] ISC-60: Anti: the per-fork tools_key never reaches the browser via any new path — panels call same-origin /api/tools/* only; gallery routes inject the key server-side. VERIFIED 2026-06-29: key absent from `build/client` (grep), no `pt_` literal in bundle; all tool calls proxy server-side.
+- [ ] ISC-61: Anti: new gallery routes refuse unauth (401) + non-owner (403); existing spend gate (mode:access+isOwner) unchanged. CODE PRESENT (getViewer→401, !isOwner→403); live probe [DEFERRED-VERIFY → ISC-62].
+- [ ] ISC-62: Antecedent: on a CF-Access fork with a valid tools_key, a real end-to-end image generation completes through the dashboard proxy and renders inline. [DEFERRED-VERIFY — deploy current code to the gated fork + set its tools_key + Interceptor real generation; this is the gating probe for "it actually works for a user"].
 
 ## Test Strategy
 

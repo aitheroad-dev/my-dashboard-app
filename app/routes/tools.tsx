@@ -3,6 +3,7 @@ import { Wrench, CheckCircle2, AlertTriangle } from "lucide-react";
 import type { Route } from "./+types/tools";
 import { useToolsStatus, useRequireEnabled } from "../lib/api";
 import { PageHeader, Card, EmptyState, Loading, ErrorState } from "../components/ui";
+import { ToolsWorkspace } from "../components/tools-panels";
 
 export function meta(_: Route.MetaArgs) {
   return [{ title: "Tools — My Dashboard" }];
@@ -15,7 +16,7 @@ export default function Tools() {
   if (isLoading) return <Loading label="Checking tools…" />;
   if (error) return <ErrorState message={(error as Error).message} />;
 
-  // Not configured → never blank; guide the owner to Settings.
+  // Not configured → never blank; guide the owner to Settings (graceful gate).
   if (!data || !data.configured) {
     return (
       <div>
@@ -23,7 +24,7 @@ export default function Tools() {
         <EmptyState
           icon={Wrench}
           title="Tools not configured"
-          message="Add your pai-tools key in Settings to connect image generation, speech-to-text, text-to-speech, and OCR. Your key stays on the server and is never exposed to the browser."
+          message="Add your pai-tools key in Settings to turn on image generation, speech-to-text, text-to-speech, and OCR. Your key stays on the server and is never exposed to the browser."
           action={
             <Link
               to="/settings"
@@ -41,7 +42,7 @@ export default function Tools() {
     <div>
       <PageHeader
         title="Tools"
-        subtitle="Connected through your server-side key — calls proxy through this dashboard."
+        subtitle="Create images, transcribe speech, generate speech, and read text from photos — all in one place."
       />
 
       <Card
@@ -58,29 +59,12 @@ export default function Tools() {
         )}
         <div className="text-sm">
           {data.valid
-            ? "Connected to pai-tools. Your key is valid."
-            : "A key is set, but pai-tools rejected it. Update it in Settings."}
+            ? "Connected. Everything runs through your server-side key — you never have to touch it."
+            : "A key is set, but pai-tools rejected it. Update it in Settings — tools below won't work until it's valid."}
         </div>
       </Card>
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Available tools
-      </h2>
-      {!data.tools || data.tools.length === 0 ? (
-        <Card className="text-sm text-slate-500">No tools reported by the service.</Card>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {data.tools.map((t) => (
-            <Card key={t.name} className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <Wrench className="h-4 w-4 text-slate-400" />
-                <h3 className="font-medium capitalize text-slate-900">{t.name}</h3>
-              </div>
-              <p className="text-sm text-slate-500">{t.description}</p>
-            </Card>
-          ))}
-        </div>
-      )}
+      <ToolsWorkspace />
     </div>
   );
 }

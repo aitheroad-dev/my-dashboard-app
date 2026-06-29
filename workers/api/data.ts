@@ -96,7 +96,21 @@ data.get("/kb/:slug", async (c) => {
 const TOOLS_BASE_FALLBACK = "https://pai-tools.aitheroad.workers.dev";
 
 function toolsBase(env: AppEnv): string {
-  return (env.TOOLS_BASE_URL || TOOLS_BASE_FALLBACK).replace(/\/+$/, "");
+  const raw = (env.TOOLS_BASE_URL || TOOLS_BASE_FALLBACK).replace(/\/+$/, "");
+  // The per-fork key rides on requests to this base — require a valid https URL
+  // (deploy-controlled, but harden defensively); fall back to the known host (L2).
+  try {
+    if (new URL(raw).protocol === "https:") return raw;
+  } catch {
+    /* malformed override */
+  }
+  return TOOLS_BASE_FALLBACK;
+}
+
+// UUID-ish media id guard (M4) — upstream-derived; reject anything else before
+// it becomes a media URL or a React key.
+function isMediaId(id: unknown): id is string {
+  return typeof id === "string" && /^[a-f0-9-]{8,}$/i.test(id);
 }
 
 data.get("/tools/status", async (c) => {
@@ -140,6 +154,90 @@ data.get("/tools/status", async (c) => {
     }
   }
   return c.json({ configured: true, valid, tools });
+});
+
+// ---- Tool galleries (owner-only, read-only) ----
+// Surfaces the fork owner's own generated media so the workspace feels inhabited.
+// Read-only + free (no spend) → owner gate is enough (lighter than the spend path).
+// The key is injected server-side; the public media URLs (unguessable UUID = the
+// capability) are constructed here so the browser can render them without the key.
+data.get("/tools/media/list", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  // Match the spend route's posture (advisor 2026-06-29): never open-dev. On a
+  // bare workers.dev fork, open-dev grants owner to every anonymous visitor, so
+  // a looser gate would leak the owner's generated media. Require verified Access.
+  if (viewer.mode !== "access" || !viewer.isOwner)
+    return c.json({ error: "Enable Cloudflare Access on this fork to view the gallery." }, 403);
+  const { config } = await readSettings(c.env);
+  const key = config.tools_key;
+  if (!key) return c.json({ items: [] });
+  const base = toolsBase(c.env);
+  try {
+    const r = await fetch(`${base}/api/media/list`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    // Surface a real error so the client can distinguish "broken" from "empty" (M5).
+    if (!r.ok) return c.json({ error: "gallery upstream error" }, 502);
+    let text = await r.text();
+    // Redaction parity with the spend route (M1) — never reflect the key.
+    if (key && text.includes(key)) text = text.split(key).join("[redacted]");
+    const j = JSON.parse(text) as {
+      items?: Array<{ id?: string; prompt?: string; quality?: string; ts?: number }>;
+    };
+    const items = (j.items ?? [])
+      .filter((it) => isMediaId(it.id))
+      .map((it) => ({
+        id: it.id as string,
+        prompt: it.prompt ?? "",
+        quality: it.quality ?? "",
+        ts: it.ts ?? 0,
+        img_url: `${base}/img/${encodeURIComponent(it.id as string)}`,
+      }));
+    return c.json({ items });
+  } catch {
+    return c.json({ error: "gallery unavailable" }, 502);
+  }
+});
+
+data.get("/tools/voice/list", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  // Match the spend route's posture (advisor 2026-06-29): never open-dev. On a
+  // bare workers.dev fork, open-dev grants owner to every anonymous visitor, so
+  // a looser gate would leak the owner's generated media. Require verified Access.
+  if (viewer.mode !== "access" || !viewer.isOwner)
+    return c.json({ error: "Enable Cloudflare Access on this fork to view the gallery." }, 403);
+  const { config } = await readSettings(c.env);
+  const key = config.tools_key;
+  if (!key) return c.json({ items: [], ttl_days: 14 });
+  const base = toolsBase(c.env);
+  try {
+    const r = await fetch(`${base}/api/voice/list`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return c.json({ error: "gallery upstream error" }, 502); // M5
+    let text = await r.text();
+    if (key && text.includes(key)) text = text.split(key).join("[redacted]"); // M1
+    const j = JSON.parse(text) as {
+      items?: Array<{ id?: string; text?: string; engine?: string; ts?: number }>;
+      ttl_days?: number;
+    };
+    const items = (j.items ?? [])
+      .filter((it) => isMediaId(it.id))
+      .map((it) => ({
+        id: it.id as string,
+        text: it.text ?? "",
+        engine: it.engine ?? "",
+        ts: it.ts ?? 0,
+        audio_url: `${base}/audio/${encodeURIComponent(it.id as string)}`,
+      }));
+    return c.json({ items, ttl_days: j.ttl_days ?? 14 });
+  } catch {
+    return c.json({ error: "gallery unavailable" }, 502);
+  }
 });
 
 data.post("/tools/:tool", async (c) => {

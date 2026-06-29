@@ -87,6 +87,43 @@ export interface ToolsStatus {
   tools?: { name: string; description: string }[];
 }
 
+// ---- Tool result shapes (mirror pai-tools `/api/<tool>` → `result.data`) ----
+
+export interface FluxResult {
+  image_url: string;
+  image_base64: string;
+  prompt: string;
+  quality: string;
+}
+export interface TtsResult {
+  play_url: string;
+  audio_file: string;
+  engine: string;
+  chars: number;
+}
+export interface OcrResult {
+  text: string;
+}
+export interface WhisperResult {
+  text: string;
+  word_count?: number;
+  language?: string;
+}
+export interface GalleryImage {
+  id: string;
+  prompt: string;
+  quality: string;
+  ts: number;
+  img_url: string;
+}
+export interface VoiceClip {
+  id: string;
+  text: string;
+  engine: string;
+  ts: number;
+  audio_url: string;
+}
+
 export interface Me {
   email: string;
   isOwner: boolean;
@@ -171,6 +208,27 @@ export const useToolsStatus = () =>
   useQuery({
     queryKey: ["tools-status"],
     queryFn: () => apiGet<ToolsStatus>("/api/tools/status"),
+  });
+
+/**
+ * Invoke a tool through the server-side proxy (ISC-54.x). The per-fork pt_ key is
+ * injected by the Worker; it never reaches the browser. Returns pai-tools'
+ * unwrapped `result.data`; a non-2xx surfaces its `{error}` via ApiError.
+ */
+export const callTool = <T>(tool: string, body: unknown) =>
+  apiPost<T>(`/api/tools/${tool}`, body);
+
+export const useToolGallery = () =>
+  useQuery({
+    queryKey: ["tools-gallery"],
+    queryFn: () => apiGet<{ items: GalleryImage[] }>("/api/tools/media/list"),
+  });
+
+export const useVoiceGallery = () =>
+  useQuery({
+    queryKey: ["tools-voice"],
+    queryFn: () =>
+      apiGet<{ items: VoiceClip[]; ttl_days: number }>("/api/tools/voice/list"),
   });
 
 export const useUpdateSettings = () => {
