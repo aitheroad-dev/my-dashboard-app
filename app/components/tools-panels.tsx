@@ -339,14 +339,17 @@ function ImagePanel() {
 
 // ---- Text → Speech (tts) ----
 
-const VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"];
-
 function TextToSpeechPanel() {
   const qc = useQueryClient();
   const status = useToolsStatus();
   const multiVoice = status.data?.tts_multilingual ?? false; // true only when an OpenAI key is set
+  const voices = status.data?.tts_voices ?? []; // active engine's voices (Aura w/o key, OpenAI w/ key)
   const [text, setText] = useState("");
-  const [voice, setVoice] = useState("alloy");
+  const [voice, setVoice] = useState("");
+  // keep a valid selection as the active engine's voice list loads / changes
+  useEffect(() => {
+    if (voices.length && !voices.includes(voice)) setVoice(voices[0]);
+  }, [voices, voice]);
   const m = useMutation({
     mutationFn: () => callTool<TtsResult>("tts", { text, voice }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tools-voice"] }),
@@ -368,30 +371,31 @@ function TextToSpeechPanel() {
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
           Speak
         </Button>
-        {multiVoice ? (
+        {voices.length > 0 && (
           <select
             value={voice}
             onChange={(e) => setVoice(e.target.value)}
             className={cn(inputClass, "w-auto")}
             aria-label="Voice"
           >
-            {VOICES.map((v) => (
+            {voices.map((v) => (
               <option key={v} value={v}>
                 {v}
               </option>
             ))}
           </select>
-        ) : (
-          <span className="text-xs text-slate-500">
-            One English voice.{" "}
-            <Link to="/settings" className="font-medium underline">
-              Add an OpenAI key
-            </Link>{" "}
-            for 11 voices + other languages.
-          </span>
         )}
         <span className="text-xs text-slate-400">{text.length}/4000</span>
       </div>
+      {!multiVoice && (
+        <p className="text-xs text-slate-500">
+          {voices.length} English voices (Deepgram Aura).{" "}
+          <Link to="/settings" className="font-medium underline">
+            Add an OpenAI key
+          </Link>{" "}
+          for Hebrew + other languages.
+        </p>
+      )}
       {m.isPending && <Working label="Generating speech…" />}
       {m.isError && <ErrorLine message={errMsg(m.error)} />}
       {m.data && (

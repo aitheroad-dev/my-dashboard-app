@@ -31,6 +31,8 @@ const MAX_TRANSCRIPT_STORE = 8000; // cap the transcript text kept in the galler
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // whisper/ocr input ceiling
 
 const OPENAI_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"];
+// Deepgram Aura-1 (Workers AI, English) — the no-key engine. 12 confirmed speakers.
+const AURA1_VOICES = ["asteria", "luna", "stella", "athena", "hera", "orion", "arcas", "perseus", "angus", "orpheus", "helios", "zeus"];
 
 // ids are crypto.randomUUID() v4 — match exactly (no path/KV-key chars possible).
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,14 +54,15 @@ export class ToolError extends Error {
 }
 
 /** Run a Workers-AI model with a hard timeout — a stalled model otherwise hangs
- * the request until the platform kills it. Times out → ToolError(504). */
-async function runAI(env: AppEnv, model: string, input: unknown): Promise<unknown> {
+ * the request until the platform kills it. Times out → ToolError(504). `options`
+ * is the binding's 3rd arg (e.g. `{returnRawResponse:true}` for Aura audio). */
+async function runAI(env: AppEnv, model: string, input: unknown, options?: unknown): Promise<unknown> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new ToolError(504, "The model took too long to respond.")), AI_TIMEOUT_MS);
   });
   try {
-    return await Promise.race([env.AI.run(model as never, input as never), timeout]);
+    return await Promise.race([env.AI.run(model as never, input as never, options as never), timeout]);
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -118,18 +121,25 @@ async function pushIndex(
 
 export function toolsStatus(env: AppEnv, openaiKey: string | null, canUse: boolean) {
   const ttsMultilingual = Boolean(openaiKey || env.OPENAI_API_KEY);
+  // Active TTS engine + the voices the picker should offer. With an OpenAI key →
+  // gpt-4o-mini-tts (multilingual, incl. Hebrew); otherwise → Deepgram Aura-1
+  // (English, 12 voices) on this fork's own env.AI — no key needed.
+  const tts_engine = ttsMultilingual ? "openai:gpt-4o-mini-tts" : "deepgram:aura-1";
+  const tts_voices = ttsMultilingual ? OPENAI_VOICES : AURA1_VOICES;
   return {
     // `ready` reflects whether THIS viewer can actually run the tools (every tool
     // route is owner-gated). An open-dev / non-owner viewer gets ready:false so the
     // page shows an honest "sign in" state instead of a green banner over 403s.
     ready: canUse,
     tts_multilingual: ttsMultilingual,
+    tts_engine,
+    tts_voices,
     tools: [
       { name: "image", description: "Generate an image from a text prompt." },
       { name: "speak-to-text", description: "Transcribe speech (multilingual)." },
       { name: "text-to-speech", description: ttsMultilingual
         ? "Read text aloud (multilingual, incl. Hebrew)."
-        : "Read text aloud (English; add an OpenAI key for other languages)." },
+        : "Read text aloud (English, 12 voices via Deepgram Aura)." },
       { name: "read-text", description: "Extract text from a photo or screenshot." },
     ],
   };
@@ -263,15 +273,24 @@ export async function synthesize(
     contentType = "audio/mpeg";
     engine = "openai:gpt-4o-mini-tts";
   } else {
-    // No OpenAI key → Workers AI MeloTTS (English only; returns WAV despite docs).
-    const result = (await runAI(env, "@cf/myshell-ai/melotts", {
-      prompt: text,
-      lang: "en",
-    })) as { audio?: string };
-    if (!result?.audio) throw new ToolError(502, "No audio was returned.");
-    bytes = decodeB64(result.audio);
-    contentType = "audio/wav";
-    engine = "melotts";
+    // No OpenAI key → Deepgram Aura-1 on Workers AI (English, 12 voices, mp3).
+    const reqVoice = typeof input.voice === "string" ? input.voice.toLowerCase() : "";
+    const speaker = AURA1_VOICES.includes(reqVoice) ? reqVoice : AURA1_VOICES[0];
+    // Aura streams audio bytes; `returnRawResponse` yields a Response/stream we read.
+    const aiResp = await runAI(
+      env,
+      "@cf/deepgram/aura-1",
+      { text, speaker, encoding: "mp3" },
+      { returnRawResponse: true },
+    );
+    const ab =
+      aiResp instanceof Response
+        ? await aiResp.arrayBuffer()
+        : await new Response(aiResp as ReadableStream).arrayBuffer();
+    bytes = new Uint8Array(ab);
+    if (bytes.byteLength === 0) throw new ToolError(502, "No audio was returned.");
+    contentType = "audio/mpeg";
+    engine = "deepgram:aura-1";
   }
 
   const id = crypto.randomUUID();

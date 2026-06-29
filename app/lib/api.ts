@@ -87,6 +87,8 @@ export interface KbDoc {
 export interface ToolsStatus {
   ready: boolean; // this viewer can run the tools (CF-Access owner; routes are owner-gated)
   tts_multilingual: boolean; // an OpenAI key is set → TTS does Hebrew/etc.
+  tts_engine: string; // active TTS engine id (openai:gpt-4o-mini-tts | deepgram:aura-1)
+  tts_voices: string[]; // voices the picker should offer for the active engine
   tools: { name: string; description: string }[];
 }
 
