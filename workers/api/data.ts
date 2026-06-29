@@ -21,7 +21,10 @@ import {
   synthesize,
   listImages,
   listVoice,
+  listTranscripts,
   getMedia,
+  deleteMedia,
+  deleteTranscript,
   ToolError,
 } from "../services/tools";
 
@@ -133,6 +136,14 @@ data.get("/tools/voice/list", async (c) => {
   return c.json(await listVoice(c.env));
 });
 
+data.get("/tools/text/list", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  if (viewer.mode !== "access" || !viewer.isOwner)
+    return c.json({ error: "Sign in to this dashboard to view your gallery." }, 403);
+  return c.json(await listTranscripts(c.env));
+});
+
 // Serve this fork's own generated media from KV (owner-only; the browser's
 // same-origin <img>/<audio> requests carry the CF Access cookie, so they're authed).
 data.get("/tools/media/:kind/:id", async (c) => {
@@ -150,6 +161,28 @@ data.get("/tools/media/:kind/:id", async (c) => {
       "x-content-type-options": "nosniff",
     },
   });
+});
+
+// Delete one gallery item (owner-only) — image/audio blob + its index entry.
+data.delete("/tools/media/:kind/:id", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  if (viewer.mode !== "access" || !viewer.isOwner) return c.json({ error: "forbidden" }, 403);
+  const kind = c.req.param("kind");
+  if (kind !== "img" && kind !== "audio") return c.json({ error: "not found" }, 404);
+  const ok = await deleteMedia(c.env, kind, c.req.param("id"));
+  if (!ok) return c.json({ error: "not found" }, 404);
+  return c.json({ deleted: true });
+});
+
+// Delete one saved transcript (owner-only).
+data.delete("/tools/text/:id", async (c) => {
+  const viewer = await getViewer(c.req.raw, c.env);
+  if (!viewer) return c.json({ error: "unauthorized" }, 401);
+  if (viewer.mode !== "access" || !viewer.isOwner) return c.json({ error: "forbidden" }, 403);
+  const ok = await deleteTranscript(c.env, c.req.param("id"));
+  if (!ok) return c.json({ error: "not found" }, 404);
+  return c.json({ deleted: true });
 });
 
 // Run a tool natively. Never open-dev: a bare workers.dev fork would otherwise let

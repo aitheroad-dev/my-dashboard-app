@@ -45,6 +45,7 @@ export const apiPut = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 export const apiPost = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
+export const apiDelete = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ---- Shared types (mirror the server shapes) ----
 
@@ -124,6 +125,12 @@ export interface VoiceClip {
   engine: string;
   ts: number;
   audio_url: string;
+}
+export interface TranscriptClip {
+  id: string;
+  text: string;
+  language: string;
+  ts: number;
 }
 
 export interface Me {
@@ -233,6 +240,28 @@ export const useVoiceGallery = () =>
     queryFn: () =>
       apiGet<{ items: VoiceClip[]; ttl_days: number }>("/api/tools/voice/list"),
   });
+
+export const useTranscriptGallery = () =>
+  useQuery({
+    queryKey: ["tools-text"],
+    queryFn: () => apiGet<{ items: TranscriptClip[] }>("/api/tools/text/list"),
+  });
+
+/** Delete one gallery item, then refresh the matching gallery list. `kind` is
+ * "img"/"audio" (media blobs) or "text" (saved transcripts). */
+export const useDeleteGalleryItem = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, id }: { kind: "img" | "audio" | "text"; id: string }) =>
+      kind === "text"
+        ? apiDelete<{ deleted: boolean }>(`/api/tools/text/${id}`)
+        : apiDelete<{ deleted: boolean }>(`/api/tools/media/${kind}/${id}`),
+    onSuccess: (_data, { kind }) => {
+      const key = kind === "img" ? "tools-gallery" : kind === "audio" ? "tools-voice" : "tools-text";
+      qc.invalidateQueries({ queryKey: [key] });
+    },
+  });
+};
 
 export const useUpdateSettings = () => {
   const qc = useQueryClient();

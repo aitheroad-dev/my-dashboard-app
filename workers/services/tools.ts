@@ -21,11 +21,13 @@ import type { AppEnv } from "../lib/env";
 
 const IMG_INDEX = "tools:gallery:img";
 const VOICE_INDEX = "tools:gallery:voice";
+const TEXT_INDEX = "tools:gallery:text"; // saved speak→text transcripts
 const IMG_PREFIX = "tools:img:";
 const AUDIO_PREFIX = "tools:audio:";
 const VOICE_TTL = 60 * 60 * 24 * 14; // saved voice clips auto-expire after 14 days
 const GALLERY_CAP = 100;
 const MAX_TTS_CHARS = 4000;
+const MAX_TRANSCRIPT_STORE = 8000; // cap the transcript text kept in the gallery index
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // whisper/ocr input ceiling
 
 const OPENAI_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"];
@@ -182,11 +184,21 @@ export async function transcribe(
     transcription_info?: { language?: string };
   };
   if (typeof result?.text !== "string") throw new ToolError(502, "No transcription was returned.");
-  return {
-    text: result.text.trim(),
-    word_count: result.word_count,
-    language: result.transcription_info?.language,
-  };
+  const text = result.text.trim();
+  const detectedLang = result.transcription_info?.language ?? "";
+
+  // Auto-save the transcript to this fork's own gallery (text kept inline in the
+  // index — no separate blob — so it's directly copyable later). Skip empties.
+  if (text) {
+    await pushIndex(env, TEXT_INDEX, {
+      id: crypto.randomUUID(),
+      text: text.slice(0, MAX_TRANSCRIPT_STORE),
+      language: detectedLang,
+      ts: Date.now(),
+    });
+  }
+
+  return { text, word_count: result.word_count, language: detectedLang };
 }
 
 // ---- Read Text (OCR) ----
@@ -323,6 +335,62 @@ export async function listVoice(env: AppEnv): Promise<{ items: Array<Record<stri
       audio_url: `/api/tools/media/audio/${encodeURIComponent(it.id as string)}`,
     }));
   return { items, ttl_days: 14 };
+}
+
+export async function listTranscripts(env: AppEnv): Promise<{ items: Array<Record<string, unknown>> }> {
+  const raw = await env.KV.get(TEXT_INDEX);
+  let list: Array<{ id?: string; text?: string; language?: string; ts?: number }> = [];
+  if (raw) {
+    try {
+      const p = JSON.parse(raw);
+      if (Array.isArray(p)) list = p;
+    } catch {
+      list = [];
+    }
+  }
+  const items = list
+    .filter((it) => typeof it.id === "string" && isMediaId(it.id))
+    .map((it) => ({
+      id: it.id as string,
+      text: it.text ?? "",
+      language: it.language ?? "",
+      ts: it.ts ?? 0,
+    }));
+  return { items };
+}
+
+// ---- Delete (owner prunes their own gallery) ----
+
+/** Drop one entry (by id) from a gallery index, preserving the index's own TTL. */
+async function removeFromIndex(env: AppEnv, indexKey: string, id: string, ttl?: number): Promise<void> {
+  const raw = await env.KV.get(indexKey);
+  if (!raw) return;
+  let list: Array<Record<string, unknown>> = [];
+  try {
+    const p = JSON.parse(raw);
+    if (Array.isArray(p)) list = p;
+  } catch {
+    return;
+  }
+  const next = list.filter((it) => it.id !== id);
+  await env.KV.put(indexKey, JSON.stringify(next), ttl ? { expirationTtl: ttl } : undefined);
+}
+
+/** Delete a generated image / audio clip: remove its KV blob AND its index entry. */
+export async function deleteMedia(env: AppEnv, kind: "img" | "audio", id: string): Promise<boolean> {
+  if (!isMediaId(id)) return false;
+  const prefix = kind === "img" ? IMG_PREFIX : AUDIO_PREFIX;
+  const indexKey = kind === "img" ? IMG_INDEX : VOICE_INDEX;
+  await env.KV.delete(`${prefix}${id}`);
+  await removeFromIndex(env, indexKey, id, kind === "audio" ? VOICE_TTL : undefined);
+  return true;
+}
+
+/** Delete a saved transcript (text lives inline in the index — no blob). */
+export async function deleteTranscript(env: AppEnv, id: string): Promise<boolean> {
+  if (!isMediaId(id)) return false;
+  await removeFromIndex(env, TEXT_INDEX, id);
+  return true;
 }
 
 // ---- Media serve (owner reads their own bytes from this fork's KV) ----

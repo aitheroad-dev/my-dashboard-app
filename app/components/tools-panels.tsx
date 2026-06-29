@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Image as ImageIcon,
@@ -13,6 +14,7 @@ import {
   Upload,
   Loader2,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button, Card } from "./ui";
@@ -20,6 +22,9 @@ import {
   callTool,
   useToolGallery,
   useVoiceGallery,
+  useTranscriptGallery,
+  useDeleteGalleryItem,
+  useToolsStatus,
   type FluxResult,
   type TtsResult,
   type OcrResult,
@@ -261,10 +266,22 @@ function ImagePanel() {
   const qc = useQueryClient();
   const [prompt, setPrompt] = useState("");
   const [quality, setQuality] = useState<"high" | "fast">("high");
+  // Synchronous re-entrancy guard: `disabled`/`isPending` only update on the next
+  // render, so two clicks fired before that re-render both pass — a ref blocks the
+  // second one instantly (this is what caused the duplicate image on the first test).
+  const submitting = useRef(false);
   const m = useMutation({
     mutationFn: () => callTool<FluxResult>("flux", { prompt, quality }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tools-gallery"] }),
+    onSettled: () => {
+      submitting.current = false;
+    },
   });
+  const generate = () => {
+    if (submitting.current || !prompt.trim()) return;
+    submitting.current = true;
+    m.mutate();
+  };
 
   return (
     <div className="space-y-4">
@@ -277,7 +294,7 @@ function ImagePanel() {
         />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => m.mutate()} disabled={!prompt.trim() || m.isPending}>
+        <Button onClick={generate} disabled={!prompt.trim() || m.isPending}>
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           Generate image
         </Button>
@@ -326,6 +343,8 @@ const VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nov
 
 function TextToSpeechPanel() {
   const qc = useQueryClient();
+  const status = useToolsStatus();
+  const multiVoice = status.data?.tts_multilingual ?? false; // true only when an OpenAI key is set
   const [text, setText] = useState("");
   const [voice, setVoice] = useState("alloy");
   const m = useMutation({
@@ -335,7 +354,7 @@ function TextToSpeechPanel() {
 
   return (
     <div className="space-y-4">
-      <Field label="Text to speak (any language, incl. Hebrew)">
+      <Field label={multiVoice ? "Text to speak (any language, incl. Hebrew)" : "Text to speak (English)"}>
         <textarea
           className={cn(inputClass, "min-h-28 resize-y")}
           placeholder="Type anything — it'll be read aloud."
@@ -349,18 +368,28 @@ function TextToSpeechPanel() {
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
           Speak
         </Button>
-        <select
-          value={voice}
-          onChange={(e) => setVoice(e.target.value)}
-          className={cn(inputClass, "w-auto")}
-          aria-label="Voice"
-        >
-          {VOICES.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
+        {multiVoice ? (
+          <select
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
+            className={cn(inputClass, "w-auto")}
+            aria-label="Voice"
+          >
+            {VOICES.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="text-xs text-slate-500">
+            One English voice.{" "}
+            <Link to="/settings" className="font-medium underline">
+              Add an OpenAI key
+            </Link>{" "}
+            for 11 voices + other languages.
+          </span>
+        )}
         <span className="text-xs text-slate-400">{text.length}/4000</span>
       </div>
       {m.isPending && <Working label="Generating speech…" />}
@@ -387,11 +416,14 @@ function TextToSpeechPanel() {
 // ---- Speak → Text (whisper) ----
 
 function SpeakToTextPanel() {
+  const qc = useQueryClient();
   const [language, setLanguage] = useState("");
   const [fileErr, setFileErr] = useState<string | null>(null);
   const m = useMutation({
     mutationFn: (audio_base64: string) =>
       callTool<WhisperResult>("whisper", language ? { audio_base64, language } : { audio_base64 }),
+    // the transcript auto-saves server-side → refresh the gallery's Transcripts list
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tools-text"] }),
   });
   const recorder = useRecorder((b64) => {
     if (b64) m.mutate(b64);
@@ -541,23 +573,44 @@ function ReadTextPanel() {
 
 // ---- Gallery (history) ----
 
+/** Small destructive icon button used across gallery items. */
+function DeleteButton({ onClick, busy }: { onClick: () => void; busy: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      aria-label="Delete"
+      title="Delete"
+      className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white/90 p-1.5 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+    >
+      <Trash2 className="h-4 w-4" />
+    </button>
+  );
+}
+
 function GalleryPanel() {
   const images = useToolGallery();
   const clips = useVoiceGallery();
+  const transcripts = useTranscriptGallery();
+  const del = useDeleteGalleryItem();
   const imgItems = images.data?.items ?? [];
   const clipItems = clips.data?.items ?? [];
+  const textItems = transcripts.data?.items ?? [];
+  const pendingId = del.isPending ? del.variables?.id : undefined;
 
-  if (images.isLoading || clips.isLoading) return <Working label="Loading your gallery…" />;
-  if (images.isError || clips.isError)
+  if (images.isLoading || clips.isLoading || transcripts.isLoading)
+    return <Working label="Loading your gallery…" />;
+  if (images.isError || clips.isError || transcripts.isError)
     return <ErrorLine message="Couldn't load your gallery. Check the connection above and try again." />;
 
-  if (imgItems.length === 0 && clipItems.length === 0) {
+  if (imgItems.length === 0 && clipItems.length === 0 && textItems.length === 0) {
     return (
       <Card className="flex flex-col items-center gap-2 py-12 text-center">
         <Images className="h-7 w-7 text-slate-400" />
         <p className="text-sm font-medium text-slate-700">Nothing here yet</p>
         <p className="max-w-xs text-sm text-slate-500">
-          Images you generate and clips you create will be saved here.
+          Images you generate, voice clips, and transcripts you create will be saved here.
         </p>
       </Card>
     );
@@ -570,21 +623,22 @@ function GalleryPanel() {
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Images</h3>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {imgItems.map((it) => (
-              <a
-                key={it.id}
-                href={it.img_url}
-                target="_blank"
-                rel="noreferrer"
-                className="group block overflow-hidden rounded-lg border border-slate-200"
-                title={it.prompt}
-              >
-                <img
-                  src={it.img_url}
-                  alt={it.prompt}
-                  loading="lazy"
-                  className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
-                />
-              </a>
+              <div key={it.id} className="group relative overflow-hidden rounded-lg border border-slate-200">
+                <a href={it.img_url} target="_blank" rel="noreferrer" className="block" title={it.prompt}>
+                  <img
+                    src={it.img_url}
+                    alt={it.prompt}
+                    loading="lazy"
+                    className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
+                  />
+                </a>
+                <div className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <DeleteButton
+                    busy={pendingId === it.id}
+                    onClick={() => del.mutate({ kind: "img", id: it.id })}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         </section>
@@ -597,9 +651,37 @@ function GalleryPanel() {
           <div className="space-y-3">
             {clipItems.map((it) => (
               <Card key={it.id} className="flex flex-col gap-2">
-                <p className="truncate text-sm text-slate-700">{it.text || "(clip)"}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="truncate text-sm text-slate-700">{it.text || "(clip)"}</p>
+                  <DeleteButton
+                    busy={pendingId === it.id}
+                    onClick={() => del.mutate({ kind: "audio", id: it.id })}
+                  />
+                </div>
                 {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                 <audio src={it.audio_url} controls className="w-full" />
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
+      {textItems.length > 0 && (
+        <section>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Transcripts</h3>
+          <div className="space-y-3">
+            {textItems.map((it) => (
+              <Card key={it.id} className="flex flex-col gap-2">
+                <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-sm text-slate-800">
+                  {it.text || "(empty)"}
+                </p>
+                <div className="flex items-center gap-2">
+                  <CopyButton text={it.text} />
+                  <DeleteButton
+                    busy={pendingId === it.id}
+                    onClick={() => del.mutate({ kind: "text", id: it.id })}
+                  />
+                  {it.language && <span className="text-xs text-slate-400">{it.language}</span>}
+                </div>
               </Card>
             ))}
           </div>
