@@ -1,4 +1,4 @@
-import { CheckCircle2, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import type { Route } from "./+types/tools";
 import { useToolsStatus, useRequireEnabled } from "../lib/api";
 import { PageHeader, Card, Loading, ErrorState } from "../components/ui";
@@ -44,17 +44,6 @@ export default function Tools() {
         title="Tools"
         subtitle="Create images, transcribe speech, generate speech, and read text from photos — all in one place."
       />
-
-      {/* Tools run natively in this dashboard — no keys, gated by your sign-in.
-          Text-to-speech does English (Deepgram Aura) and Hebrew (Microsoft Edge),
-          both keyless. */}
-      <Card className="mb-6 flex items-center gap-3 border-emerald-200 bg-emerald-50 text-emerald-800">
-        <CheckCircle2 className="h-5 w-5 shrink-0" />
-        <div className="text-sm">
-          Ready. Everything runs in this dashboard — no setup, no keys. Text-to-speech does English
-          (Deepgram) and Hebrew (Microsoft Edge).
-        </div>
-      </Card>
 
       <ToolsWorkspace />
     </div>

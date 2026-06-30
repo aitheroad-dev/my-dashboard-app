@@ -607,9 +607,10 @@ function DeleteButton({ onClick, busy }: { onClick: () => void; busy: boolean })
 }
 
 /**
- * A foldable gallery section. The open/closed choice is remembered per section
- * in localStorage so a long list (e.g. many voice clips) can be collapsed once
- * and stay out of the way — the next section is then always within reach.
+ * A foldable gallery section. Sections start collapsed (the count badge stays
+ * visible) and remember each open/closed choice per section in localStorage, so
+ * expanding a section sticks across reloads and a long list (e.g. many voice
+ * clips) never buries the sections below it.
  * Mounts client-side (gallery data loads via TanStack Query), so reading
  * localStorage in the initializer is hydration-safe.
  */
@@ -628,8 +629,8 @@ function CollapsibleSection({
 }) {
   const storageKey = `mdash.gallery.section.${id}`;
   const [open, setOpen] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(storageKey) !== "0";
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(storageKey) === "1";
   });
   const toggle = () =>
     setOpen((prev) => {
