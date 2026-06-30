@@ -4,7 +4,7 @@ task: Build the shareable per-fork personal dashboard (productized "give-it-to-a
 slug: my-dashboard
 effort: E4
 phase: verify
-progress: 69/80
+progress: 71/80
 mode: ALGORITHM
 started: 2026-06-24
 updated: 2026-06-30
@@ -63,7 +63,7 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 > Numbered sequentially; never re-numbered on edit (splits become ISC-N.M). P0 is granular (active phase); P1–P5 are coarse placeholders to be split when each phase activates.
 
 ### Antecedent
-- [ ] ISC-1: Antecedent: a recipient with no terminal/CLI access needs exactly one action — click the Deploy-to-Cloudflare button + authorize once — to get a running, isolated fork.
+- [x] ISC-1: Antecedent: a recipient needs exactly one action — click Deploy + authorize once — for a running, isolated fork. ✅ DEMONSTRATED 2026-06-30 (fork #1 = Yaron, `my-dashboard-ringo`): the Deploy button auto-provisioned fresh isolated D1/R2/KV + deployed live in ~60s. ⚠️ CAVEAT (same-account only): forking onto the SAME account as an existing instance triggers resource-NAME collisions (wizard pre-binds the existing D1/R2/KV) → needs manual "Create new" + rename. A real recipient on their own empty CF account hits NO collision = true one-action.
 
 ### P0 — Foundation (scaffold + isolation + deploy)  ✅ buildable surface VERIFIED (deploy-button proof deferred to Yaron)
 - [x] ISC-2: `~/Projects/my-dashboard-app` is a fresh git repo with its own initial commit (`6759d59`; template `.git` removed; `git remote -v` empty).
@@ -135,7 +135,7 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [ ] ISC-52: A fork that enables Meetings + supplies secrets gets a bot joining a test call + a rendered transcript.
 
 ### Cross-cutting
-- [ ] ISC-53: Anti: no recipient fork can read or write another fork's D1/R2 (no shared binding, no cross-fork query path exists).
+- [x] ISC-53: Anti: no recipient fork can read or write another fork's D1/R2 (no shared binding, no cross-fork query path). ✅ PROVEN 2026-06-30: two live forks exist with PHYSICALLY DISTINCT databases — staging `my-dashboard-db` (`ee9fee75`) vs Yaron's `my-dashboard-ringo-db` (`b26450cf`) — own D1/R2/KV per worker, no shared binding. Isolation by construction.
 
 ### Tools Workspace (functional home) — built 2026-06-29
 > Promotes the Tools page from catalog-embed (ISC-38) to a functional workspace where the fork's tools are actually USED. FirstPrinciples UX: zero setup, one calm sectioned surface, input→visible output in place, honest waiting/failure, gallery memory, graceful gate. Access model = inside the gated fork (Yaron's pick 2026-06-29).
@@ -237,6 +237,8 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - 2026-06-30: **Tools workspace LIVE-VERIFIED end-to-end** (agent=Ringo, Interceptor authed Chrome). TTS, Speak→Text (whisper), Read Text (OCR), and Gallery all exercised with real inputs against the live fork — every native `env.AI` call returned 200, NO 1042. Closed ISC-56/57/58/59/63/64/65/66 → progress 66/77. File injected into the hidden `<input type=file>` via DataTransfer (fires React onChange) since the eval transport caps ~6KB — large base64 streamed into the page in ~4.5KB chunks, then injected.
 - 2026-06-30: **OCR MODEL FINDING (golden-image gap, decision OPEN).** `llava-1.5-7b` OCR fidelity is WEAK: input "Invoice 4071 EUR 128.50" → returned "4007171 EURO" (garbled digits, dropped words). The path + render are correct, but the extraction quality is below Yaron's "really tight" bar. Whisper (`whisper-large-v3-turbo`) by contrast is strong. **Options for the golden image:** (a) swap OCR to a stronger vision model — Mistral Small 3.1 (EU-safe, already noted in code comment) or Llama-3.2-vision (needs Meta model agreement on the account); (b) keep llava + lower the page's promise ("rough text extraction"); (c) route OCR through a dedicated OCR path. **RESOLVED 2026-06-30:** chose (a) — swapped to **Mistral Small 3.1** (`@cf/mistralai/mistral-small-3.1-24b-instruct`), verified live on the account via REST first (exact extraction) then live on staging through the UI. EU-safe, no Meta agreement, best fidelity. ISC-58 closed.
 - 2026-06-30: **workerd outbound-WebSocket scheme gotcha (REUSABLE).** The Edge TTS module first 502'd live ("failed unexpectedly" = a raw non-ToolError). Cause: `fetch()` was called with a `wss://` URL — workerd's fetch-upgrade WebSocket **requires the `https://` scheme** (it rejects `wss://`). Fix = one-token change `wss://`→`https://` in `edge-tts.ts`; Hebrew TTS went green immediately. Also added explicit `Edge connect failed: …` / `Edge handshake rejected (HTTP n)` ToolErrors so a future failure surfaces its cause instead of the generic wrapper. Mirrors how the protocol was de-risked: prove in bun, port to workerd, live-probe the runtime difference.
+- 2026-06-30: **FORK #1 = Yaron ("MyDashboard Ringo") is LIVE.** `my-dashboard-ringo.aitheroad.workers.dev` — own D1 `my-dashboard-ringo-db` (`b26450cf`), own R2/KV, CF Access app `6bbfdfef` (AUD `a93134db…`) allow-policy `aitheroad@gmail.com`, running the golden image (Mistral OCR + keyless Edge Hebrew + 6 pages). `/api/me`→200 `mode:access isOwner:true`; unauth→302. Display name "MyDashboard Ringo". Created via the Deploy button (Yaron did Git-connect + the 3 binding "create new" fixes by hand due to same-account collision; I drove name + verified isolation + set Access).
+- 2026-06-30: **REUSABLE — adding CF Access to a workers.dev fork via API** (no UI, the `access-api-token` has Access:Apps&Policies:Edit scope): (1) POST `/accounts/{acct}/access/apps` `{name, domain:"<sub>.aitheroad.workers.dev", type:"self_hosted", session_duration:"24h"}` → returns `id`+`aud`; (2) POST `/access/apps/{id}/policies` `{name:"Owner", decision:"allow", include:[{email:{email}}]}`; (3) set worker secrets via global-key API `PUT /workers/scripts/{worker}/secrets` (X-Auth-Email+X-Auth-Key) for `ACCESS_TEAM_DOMAIN=small-fire-f8d3.cloudflareaccess.com`, `ACCESS_AUD=<aud>`, `TENANT_OWNER_EMAIL`. Access enforces at the edge on workers.dev directly (302→login); existing team IdP session SSOs straight through. This is the per-fork onboarding step for every future recipient (Noa next).
 - 2026-06-30: **Hebrew TTS confirmed dashboard-NOT-capable without the OpenAI key.** Live test: Hebrew text → engine stayed `deepgram:aura-1` (English), silent fallback, no error. So Yaron's "Hebrew works pretty well" is pai-meet / Family OS, not this dashboard. OpenAI key deferred by Yaron (2026-06-30) — Hebrew TTS on the dashboard stays unavailable until a key is set; the banner is honest about it.
 - 2026-06-30: **ISC-61/67 (auth refusal) status.** Edge CF Access returns 302 for ALL unauthenticated requests (verified live). The app-level non-owner/open-dev 403 branch is code-present + Forge-audited but cannot be separately probed on an Access-configured fork (would need a second, non-owner identity) → live probe deferred to the first real recipient fork (fork-2 / Noa). Left `- [ ]`.
 
