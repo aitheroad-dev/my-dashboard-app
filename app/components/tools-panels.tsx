@@ -15,6 +15,7 @@ import {
   Loader2,
   Sparkles,
   Trash2,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button, Card } from "./ui";
@@ -593,6 +594,70 @@ function DeleteButton({ onClick, busy }: { onClick: () => void; busy: boolean })
   );
 }
 
+/**
+ * A foldable gallery section. The open/closed choice is remembered per section
+ * in localStorage so a long list (e.g. many voice clips) can be collapsed once
+ * and stay out of the way — the next section is then always within reach.
+ * Mounts client-side (gallery data loads via TanStack Query), so reading
+ * localStorage in the initializer is hydration-safe.
+ */
+function CollapsibleSection({
+  id,
+  title,
+  count,
+  meta,
+  children,
+}: {
+  id: string;
+  title: string;
+  count: number;
+  meta?: string;
+  children: React.ReactNode;
+}) {
+  const storageKey = `mdash.gallery.section.${id}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(storageKey) !== "0";
+  });
+  const toggle = () =>
+    setOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        /* ignore storage failures (private mode, quota) */
+      }
+      return next;
+    });
+
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="group mb-3 flex w-full select-none items-center gap-2 text-left"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            "h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:text-slate-600",
+            open && "rotate-90",
+          )}
+        />
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 group-hover:text-slate-700">
+          {title}
+        </h3>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium tabular-nums text-slate-500">
+          {count}
+        </span>
+        {meta && <span className="text-xs text-slate-400">{meta}</span>}
+      </button>
+      {open && children}
+    </section>
+  );
+}
+
 function GalleryPanel() {
   const images = useToolGallery();
   const clips = useVoiceGallery();
@@ -623,8 +688,7 @@ function GalleryPanel() {
   return (
     <div className="space-y-8">
       {imgItems.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Images</h3>
+        <CollapsibleSection id="images" title="Images" count={imgItems.length}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {imgItems.map((it) => (
               <div key={it.id} className="group relative overflow-hidden rounded-lg border border-slate-200">
@@ -645,13 +709,15 @@ function GalleryPanel() {
               </div>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
       )}
       {clipItems.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Voice clips{clips.data?.ttl_days ? ` · kept ${clips.data.ttl_days} days` : ""}
-          </h3>
+        <CollapsibleSection
+          id="clips"
+          title="Voice clips"
+          count={clipItems.length}
+          meta={clips.data?.ttl_days ? `kept ${clips.data.ttl_days} days` : undefined}
+        >
           <div className="space-y-3">
             {clipItems.map((it) => (
               <Card key={it.id} className="flex flex-col gap-2">
@@ -667,11 +733,10 @@ function GalleryPanel() {
               </Card>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
       )}
       {textItems.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Transcripts</h3>
+        <CollapsibleSection id="transcripts" title="Transcripts" count={textItems.length}>
           <div className="space-y-3">
             {textItems.map((it) => (
               <Card key={it.id} className="flex flex-col gap-2">
@@ -689,7 +754,7 @@ function GalleryPanel() {
               </Card>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
       )}
     </div>
   );
