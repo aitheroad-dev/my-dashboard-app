@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Image as ImageIcon,
@@ -343,13 +342,20 @@ function ImagePanel() {
 function TextToSpeechPanel() {
   const qc = useQueryClient();
   const status = useToolsStatus();
-  const multiVoice = status.data?.tts_multilingual ?? false; // true only when an OpenAI key is set
-  const voices = status.data?.tts_voices ?? []; // active engine's voices (Aura w/o key, OpenAI w/ key)
+  const languages = status.data?.tts_languages ?? []; // [{ code, label, engine, voices }] — English (Aura) + Hebrew (Edge)
   const [text, setText] = useState("");
+  const [langCode, setLangCode] = useState("en");
   const [voice, setVoice] = useState("");
-  // keep a valid selection as the active engine's voice list loads / changes
+  // The selected language (fall back to the first available so the panel is never blank).
+  const selectedLang = languages.find((l) => l.code === langCode) ?? languages[0];
+  const voices = selectedLang?.voices ?? [];
+  // Keep the language selection valid as the status loads (default English / first language).
   useEffect(() => {
-    if (voices.length && !voices.includes(voice)) setVoice(voices[0]);
+    if (languages.length && !languages.some((l) => l.code === langCode)) setLangCode(languages[0].code);
+  }, [languages, langCode]);
+  // Keep a valid voice selected as the chosen language's voice list loads / changes.
+  useEffect(() => {
+    if (voices.length && !voices.some((v) => v.id === voice)) setVoice(voices[0].id);
   }, [voices, voice]);
   const m = useMutation({
     mutationFn: () => callTool<TtsResult>("tts", { text, voice }),
@@ -358,7 +364,7 @@ function TextToSpeechPanel() {
 
   return (
     <div className="space-y-4">
-      <Field label={multiVoice ? "Text to speak (any language, incl. Hebrew)" : "Text to speak (English)"}>
+      <Field label="Text to speak">
         <textarea
           className={cn(inputClass, "min-h-28 resize-y")}
           placeholder="Type anything — it'll be read aloud."
@@ -372,6 +378,20 @@ function TextToSpeechPanel() {
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
           Speak
         </Button>
+        {languages.length > 1 && (
+          <select
+            value={langCode}
+            onChange={(e) => setLangCode(e.target.value)}
+            className={cn(inputClass, "w-auto")}
+            aria-label="Language"
+          >
+            {languages.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        )}
         {voices.length > 0 && (
           <select
             value={voice}
@@ -380,23 +400,15 @@ function TextToSpeechPanel() {
             aria-label="Voice"
           >
             {voices.map((v) => (
-              <option key={v} value={v}>
-                {v}
+              <option key={v.id} value={v.id}>
+                {v.label}
               </option>
             ))}
           </select>
         )}
         <span className="text-xs text-slate-400">{text.length}/4000</span>
       </div>
-      {!multiVoice && (
-        <p className="text-xs text-slate-500">
-          {voices.length} English voices (Deepgram Aura).{" "}
-          <Link to="/settings" className="font-medium underline">
-            Add an OpenAI key
-          </Link>{" "}
-          for Hebrew + other languages.
-        </p>
-      )}
+      <p className="text-xs text-slate-500">English (Deepgram) + Hebrew (Microsoft Edge) — no key needed.</p>
       {m.isPending && <Working label="Generating speech…" />}
       {m.isError && <ErrorLine message={errMsg(m.error)} />}
       {m.data && (

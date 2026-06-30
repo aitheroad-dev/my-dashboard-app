@@ -58,16 +58,14 @@ export interface Config {
   theme: Theme;
   enabled_pages: PageKey[];
   page_order: PageKey[];
-  tools_key: string | null; // deprecated (pai-tools removed); always null to the client
   openai_key: string | null; // optional, server-side only — for multilingual TTS
   prefs: Record<string, unknown>;
 }
 
 export interface Settings {
   display_name: string;
-  config: Config; // tools_key + openai_key are always null here — server-redacted (ISC-39)
+  config: Config; // openai_key is always null here — server-redacted (ISC-39)
   pages: PageKey[];
-  tools_configured: boolean; // deprecated
   openai_configured: boolean; // an OpenAI key is set → multilingual TTS available
 }
 
@@ -84,11 +82,19 @@ export interface KbDoc {
   updated_at: string;
 }
 
+export interface TtsVoice {
+  id: string; // engine-specific voice id sent to callTool("tts", { voice })
+  label: string; // friendly display name (e.g. "Avri (male)", "Asteria")
+}
+export interface TtsLanguage {
+  code: string; // short language code: "en" | "he"
+  label: string; // language selector display name (e.g. "English", "עברית")
+  engine: string; // engine backing this language (deepgram:aura-1 | microsoft-edge)
+  voices: TtsVoice[]; // voices this language offers, in display order
+}
 export interface ToolsStatus {
   ready: boolean; // this viewer can run the tools (CF-Access owner; routes are owner-gated)
-  tts_multilingual: boolean; // an OpenAI key is set → TTS does Hebrew/etc.
-  tts_engine: string; // active TTS engine id (openai:gpt-4o-mini-tts | deepgram:aura-1)
-  tts_voices: string[]; // voices the picker should offer for the active engine
+  tts_languages: TtsLanguage[]; // language-grouped TTS: English keyless Aura + Hebrew keyless Edge
   tools: { name: string; description: string }[];
 }
 

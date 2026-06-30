@@ -32,7 +32,7 @@ import {
  * HTTP `/api/*` routes — thin handlers over the shared service layer
  * (`workers/services/store.ts`). The MCP control plane calls the SAME service
  * functions (ISC-45), so there is one query path, not two. Auth via the
- * `getViewer` seam; portfolio ships empty; `tools_key` is redacted from every
+ * `getViewer` seam; portfolio ships empty; `openai_key` is redacted from every
  * settings response (ISC-39).
  */
 export const data = new Hono<{ Bindings: AppEnv }>();
@@ -112,11 +112,11 @@ data.get("/kb/:slug", async (c) => {
 data.get("/tools/status", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  const { config } = await readSettings(c.env);
   // `ready` tracks whether this viewer can actually run the tools (all tool routes
-  // are owner-gated) — so the page shows an honest state on an open-dev fork.
+  // are owner-gated) — so the page shows an honest state on an open-dev fork. The
+  // status no longer depends on any key: English (Aura) and Hebrew (Edge) are keyless.
   const canUse = viewer.mode === "access" && viewer.isOwner;
-  return c.json(toolsStatus(c.env, config.openai_key, canUse));
+  return c.json(toolsStatus(canUse));
 });
 
 // ---- Tool galleries (owner-only) — this fork's OWN generated media ----

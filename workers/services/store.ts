@@ -105,7 +105,7 @@ function safeParse(s: string): unknown {
   }
 }
 
-/** Internal read — returns the FULL config (incl. the real tools_key). Never send
+/** Internal read — returns the FULL config (incl. the real openai_key). Never send
  * this straight to a client; use publicSettings() for any client/MCP response. */
 export async function readSettings(env: AppEnv): Promise<SettingsOut> {
   const sql = getDb(env);
@@ -131,17 +131,16 @@ export async function writeSettings(env: AppEnv, patch: unknown): Promise<Settin
   return { display_name: next.display_name, config: next, pages: resolvePages(next) };
 }
 
-/** Client-safe settings view — NEVER leaks tools_key (ISC-39). Used by both the
+/** Client-safe settings view — NEVER leaks openai_key (ISC-39). Used by both the
  * HTTP /settings routes and the MCP get_settings tool. */
 export function publicSettings(out: SettingsOut) {
-  // Strip every server-side secret from the client view (ISC-39): the deprecated
-  // tools_key and the optional openai_key are NEVER sent to the browser.
-  const { tools_key, openai_key, ...rest } = out.config;
+  // Strip every server-side secret from the client view (ISC-39): the optional
+  // openai_key is NEVER sent to the browser.
+  const { openai_key, ...rest } = out.config;
   return {
     display_name: out.display_name,
-    config: { ...rest, tools_key: null, openai_key: null },
+    config: { ...rest, openai_key: null },
     pages: out.pages,
-    tools_configured: Boolean(tools_key && tools_key.length > 0),
     openai_configured: Boolean(openai_key && openai_key.length > 0),
   };
 }
