@@ -10,7 +10,9 @@ import { ToolError } from "./tool-error";
  */
 
 const AI_TIMEOUT_MS = 60_000;
-const EDGE_TTS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
+// workerd outbound WebSockets go through fetch() with an `Upgrade: websocket` header
+// and require the HTTPS scheme (not wss://) — fetch() rejects the wss:// scheme.
+const EDGE_TTS_URL = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
 const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 const GEC_VERSION = "1-143.0.3650.75";
 const DEFAULT_HEBREW_VOICE = "he-IL-AvriNeural";
@@ -36,10 +38,15 @@ export async function synthesizeHebrew(text: string, voice: string): Promise<Uin
   const selectedVoice = HEBREW_VOICES.has(voice) ? voice : DEFAULT_HEBREW_VOICE;
   const token = await edgeGecToken();
   const url = `${EDGE_TTS_URL}?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&Sec-MS-GEC=${token}&Sec-MS-GEC-Version=${GEC_VERSION}`;
-  const resp = await fetch(url, { headers: { Upgrade: "websocket", ...EDGE_HEADERS } });
+  let resp: Response;
+  try {
+    resp = await fetch(url, { headers: { Upgrade: "websocket", ...EDGE_HEADERS } });
+  } catch (e) {
+    throw new ToolError(502, `Edge connect failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
   // workerd exposes outbound WebSockets as Response.webSocket, which is not in DOM Response types.
   const ws = (resp as Response & { webSocket?: WorkerdWebSocket }).webSocket;
-  if (!ws) throw new ToolError(502, "Hebrew speech service unavailable.");
+  if (!ws) throw new ToolError(502, `Edge handshake rejected (HTTP ${resp.status}).`);
 
   ws.accept();
   try {
