@@ -201,3 +201,6 @@ dist
 ### React Router ###
 .react-router/
 /build/
+
+# Per-fork configs (contain resource IDs — never commit)
+wrangler.*.jsonc
