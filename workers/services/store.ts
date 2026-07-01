@@ -31,6 +31,9 @@ export const CARD_PRIORITIES = ["none", "low", "medium", "high"] as const;
 export type CardPriority = (typeof CARD_PRIORITIES)[number];
 const isCardPriority = (p: unknown): p is CardPriority =>
   typeof p === "string" && (CARD_PRIORITIES as readonly string[]).includes(p);
+export function normalizePriority(raw: unknown): CardPriority {
+  return isCardPriority(raw) ? raw : "none";
+}
 
 export type CardLabel = { name: string; color: string };
 export type ChecklistItem = { text: string; done: boolean };
@@ -52,7 +55,7 @@ export type CardRow = {
 // ---- Sanitizers for the richer-card fields (0006). Bound every array + validate
 // shape so a bad client payload OR a corrupt DB row can never crash a read/write.
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
-function parseLabels(raw: unknown): CardLabel[] {
+export function parseLabels(raw: unknown): CardLabel[] {
   try {
     const arr = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
     if (!Array.isArray(arr)) return [];
@@ -68,7 +71,7 @@ function parseLabels(raw: unknown): CardLabel[] {
     return [];
   }
 }
-function parseChecklist(raw: unknown): ChecklistItem[] {
+export function parseChecklist(raw: unknown): ChecklistItem[] {
   try {
     const arr = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
     if (!Array.isArray(arr)) return [];
@@ -81,10 +84,14 @@ function parseChecklist(raw: unknown): ChecklistItem[] {
     return [];
   }
 }
-function normalizeDueDate(raw: unknown): string | null {
+export function normalizeDueDate(raw: unknown): string | null {
   if (raw == null || raw === "") return null;
   const s = String(raw).slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  // Reject impossible calendar dates (2026-13-45 / 2026-02-30): a real Date must
+  // round-trip to the same string — Date silently rolls overflow otherwise (Forge C).
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;
 }
 
 type CardDbRow = {
@@ -200,22 +207,37 @@ export async function editCard(
     .bind(id)
     .first<CardDbRow>();
   if (!current) throw new Error(`no card with id "${id}"`);
+
+  // Field-conditional UPDATE: SET only the columns the caller actually provided, so an
+  // edit to one field can NEVER clobber a concurrent edit to an untouched column (Forge A —
+  // makes the ISC-83.11 "no clobber" guarantee true at the DB level, not just vs defaults).
+  // Column names are fixed literals; every value is a bound param (no injection surface).
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+
   const title = input.title !== undefined ? String(input.title).trim() : current.title;
   const notes =
     input.notes !== undefined ? (input.notes == null ? null : String(input.notes).trim() || null) : current.notes;
   assertCardWritable(title, notes);
+  if (input.title !== undefined) { sets.push("title = ?"); binds.push(title); }
+  if (input.notes !== undefined) { sets.push("notes = ?"); binds.push(notes); }
+
   const due_date = input.due_date !== undefined ? normalizeDueDate(input.due_date) : normalizeDueDate(current.due_date);
   const priority: CardPriority =
-    input.priority !== undefined
-      ? isCardPriority(input.priority) ? input.priority : "none"
-      : isCardPriority(current.priority) ? current.priority : "none";
+    input.priority !== undefined ? normalizePriority(input.priority) : normalizePriority(current.priority);
   const labels = input.labels !== undefined ? parseLabels(input.labels) : parseLabels(current.labels);
   const checklist = input.checklist !== undefined ? parseChecklist(input.checklist) : parseChecklist(current.checklist);
+  if (input.due_date !== undefined) { sets.push("due_date = ?"); binds.push(due_date); }
+  if (input.priority !== undefined) { sets.push("priority = ?"); binds.push(priority); }
+  if (input.labels !== undefined) { sets.push("labels = ?"); binds.push(JSON.stringify(labels)); }
+  if (input.checklist !== undefined) { sets.push("checklist = ?"); binds.push(JSON.stringify(checklist)); }
+
   const ts = nowIso();
+  sets.push("updated_at = ?"); binds.push(ts);
+  binds.push(id);
+
   await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE cards SET title = ?, notes = ?, due_date = ?, priority = ?, labels = ?, checklist = ?, updated_at = ? WHERE id = ?",
-    ).bind(title, notes, due_date, priority, JSON.stringify(labels), JSON.stringify(checklist), ts, id),
+    env.DB.prepare(`UPDATE cards SET ${sets.join(", ")} WHERE id = ?`).bind(...binds),
     env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
       "edit_card", id, actor, `Edited card "${title}"`, ts,
     ),

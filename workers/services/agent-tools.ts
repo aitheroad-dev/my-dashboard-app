@@ -10,6 +10,10 @@ import {
   editCard,
   moveCard,
   deleteCard,
+  normalizeDueDate,
+  normalizePriority,
+  parseLabels,
+  parseChecklist,
 } from "./store";
 
 /**
@@ -39,7 +43,94 @@ export interface AgentTool {
 }
 
 const CARD_STATUS = { type: "string", enum: ["todo", "in_progress", "done"] };
+const CARD_PRIORITY = { type: "string", enum: ["none", "low", "medium", "high"] };
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+// ---- Richer-card enrichment (ISC-83.13..): due_date / priority / labels / checklist.
+// The model proposes model-friendly shapes; store.ts re-validates + bounds everything.
+
+// Fixed 7-colour label palette — mirrors app/routes/board.tsx so an Assistant-made
+// label looks identical to a hand-made one. The model proposes label NAMES; we assign
+// a STABLE on-palette colour by hashing the name (store.parseLabels colour-validates).
+const LABEL_PALETTE = ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#64748b"];
+function paletteColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return LABEL_PALETTE[h % LABEL_PALETTE.length];
+}
+/** Accept the model-friendly `["Home","Urgent"]` shape (→ {name,color}) OR pass-through
+ * `{name,color}` objects. store.parseLabels then bounds (≤12) + colour-validates. */
+function toLabels(raw: unknown): Array<{ name: string; color: string }> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((l) => {
+      if (typeof l === "string") {
+        const name = l.trim();
+        return { name, color: paletteColor(name) };
+      }
+      if (l && typeof l === "object") {
+        const name = String((l as { name?: unknown }).name ?? "").trim();
+        const color = String((l as { color?: unknown }).color ?? "") || paletteColor(name);
+        return { name, color };
+      }
+      return { name: "", color: "" };
+    })
+    .filter((l) => l.name);
+}
+/** Accept `["Buy milk","Bread"]` (each unchecked) OR `{text,done}` objects. */
+function toChecklist(raw: unknown): Array<{ text: string; done: boolean }> {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((i) => {
+      if (typeof i === "string") return { text: i.trim(), done: false };
+      if (i && typeof i === "object") {
+        return {
+          text: String((i as { text?: unknown }).text ?? "").trim(),
+          done: Boolean((i as { done?: unknown }).done),
+        };
+      }
+      return { text: "", done: false };
+    })
+    .filter((i) => i.text);
+}
+/** Map the model's raw enrichment args → the EXACT values that will persist: run them
+ * through store's own sanitizers here so (1) store re-parsing is idempotent and (2)
+ * describeEnrichment can show the owner precisely what the confirmed write commits — no
+ * "confirm shows X, writes Y" gap (Forge B). The "field absent ⇒ undefined ⇒ keep
+ * current" contract is preserved (edit_card stays additive; store.editCard now writes
+ * ONLY the provided columns → no clobber of a concurrent edit, ISC-83.14). */
+function enrichmentFields(a: Record<string, unknown>) {
+  return {
+    due_date: a.due_date === undefined ? undefined : normalizeDueDate(a.due_date),
+    priority: a.priority === undefined ? undefined : normalizePriority(a.priority),
+    labels: a.labels === undefined ? undefined : parseLabels(toLabels(a.labels)),
+    checklist: a.checklist === undefined ? undefined : parseChecklist(toChecklist(a.checklist)),
+  };
+}
+
+/** Human-readable parts describing the SANITIZED enrichment a write will persist — the
+ * single source of truth for the Confirm card, so its text == the committed result
+ * (never "due tomorrow" while writing null, or 13 labels while writing 12). Only fields
+ * the model actually sent appear (undefined ⇒ untouched). */
+export function describeEnrichment(a: Record<string, unknown>): string[] {
+  const f = enrichmentFields(a);
+  const parts: string[] = [];
+  if (f.due_date !== undefined) parts.push(f.due_date ? `due ${f.due_date}` : "due date cleared");
+  if (f.priority !== undefined) parts.push(`priority ${f.priority}`);
+  if (f.labels !== undefined)
+    parts.push(f.labels.length ? `labels: ${f.labels.map((l) => l.name).join(", ")}` : "labels cleared");
+  if (f.checklist !== undefined)
+    parts.push(
+      f.checklist.length ? `checklist (${f.checklist.length} item${f.checklist.length === 1 ? "" : "s"})` : "checklist cleared",
+    );
+  return parts;
+}
+const ENRICHMENT_PARAMS = {
+  due_date: { type: "string", description: "Due date as YYYY-MM-DD; empty string clears it." },
+  priority: CARD_PRIORITY,
+  labels: { type: "array", items: { type: "string" }, description: 'Short label names, e.g. ["Home","Urgent"].' },
+  checklist: { type: "array", items: { type: "string" }, description: "Checklist item texts; each starts unchecked." },
+};
 
 export const AGENT_TOOLS: AgentTool[] = [
   // ---------- READS (run immediately) ----------
@@ -88,16 +179,22 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "add_card",
     kind: "write",
-    description: "Add a new card to the board. Defaults to the To Do column.",
+    description:
+      "Add a new card to the board (defaults to the To Do column). You can also set a due date (YYYY-MM-DD), priority (low/medium/high), labels, and a checklist.",
     parameters: {
       type: "object",
-      properties: { title: { type: "string" }, notes: { type: "string" }, status: CARD_STATUS },
+      properties: { title: { type: "string" }, notes: { type: "string" }, status: CARD_STATUS, ...ENRICHMENT_PARAMS },
       required: ["title"],
     },
     run: (env, a, actor) =>
       addCard(
         env,
-        { title: str(a.title), notes: a.notes == null ? null : str(a.notes), status: str(a.status) || undefined },
+        {
+          title: str(a.title),
+          notes: a.notes == null ? null : str(a.notes),
+          status: str(a.status) || undefined,
+          ...enrichmentFields(a),
+        },
         actor || "assistant",
       ),
     summarize: (a) => `Add card "${str(a.title)}"${a.status ? ` to ${str(a.status)}` : ""}`,
@@ -117,10 +214,11 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     name: "edit_card",
     kind: "write",
-    description: "Edit an existing card's title and/or notes. Needs the card id.",
+    description:
+      "Edit an existing card. Send ONLY the fields to change (title, notes, due date, priority, labels, checklist) — omitted fields are kept as-is. Needs the card id.",
     parameters: {
       type: "object",
-      properties: { id: { type: "string" }, title: { type: "string" }, notes: { type: "string" } },
+      properties: { id: { type: "string" }, title: { type: "string" }, notes: { type: "string" }, ...ENRICHMENT_PARAMS },
       required: ["id"],
     },
     run: (env, a, actor) =>
@@ -130,6 +228,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           id: str(a.id),
           title: a.title === undefined ? undefined : str(a.title),
           notes: a.notes === undefined ? undefined : a.notes == null ? null : str(a.notes),
+          ...enrichmentFields(a),
         },
         actor || "assistant",
       ),

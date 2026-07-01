@@ -1,6 +1,6 @@
 import type { AppEnv } from "../lib/env";
 import { listCards, listKbDocs } from "./store";
-import { TOOLS_BY_NAME, openAiToolSpec } from "./agent-tools";
+import { TOOLS_BY_NAME, openAiToolSpec, describeEnrichment } from "./agent-tools";
 
 /**
  * Built-in Assistant (P3 Slice 2 → 3b, ISC-44/79/80/81). Answers questions grounded
@@ -116,7 +116,8 @@ async function describeWrite(env: AppEnv, toolName: string, args: Record<string,
   switch (toolName) {
     case "add_card": {
       const status = ["todo", "in_progress", "done"].includes(String(args.status)) ? args.status : "todo";
-      return `Add a card "${String(args.title ?? "")}" to ${columnLabel(status)}`;
+      const extra = describeEnrichment(args);
+      return `Add a card "${String(args.title ?? "")}" to ${columnLabel(status)}${extra.length ? " — " + extra.join(", ") : ""}`;
     }
     case "move_card":
       return `Move "${await titleOf()}" → ${columnLabel(args.status)}`;
@@ -124,6 +125,7 @@ async function describeWrite(env: AppEnv, toolName: string, args: Record<string,
       const parts: string[] = [];
       if (args.title !== undefined) parts.push(`title → "${String(args.title)}"`);
       if (args.notes !== undefined) parts.push("notes updated");
+      parts.push(...describeEnrichment(args));
       return `Edit "${await titleOf()}"${parts.length ? ": " + parts.join(", ") : ""}`;
     }
     case "delete_card":
