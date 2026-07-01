@@ -30,7 +30,7 @@ const MAX_MSG_CHARS = 4000;
 
 export type AssistantMode = "fast" | "reasoning";
 export type AssistantSource = "workers-ai" | "anthropic";
-export type PendingAction = { tool: string; args: Record<string, unknown>; summary: string };
+export type PendingAction = { tool: string; args: Record<string, unknown>; summary: string; detail: string };
 export type AssistantAnswer = {
   answer: string;
   model: string;
@@ -42,7 +42,7 @@ export type AssistantAnswer = {
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 export type ConfirmInput = { tool: string; args: Record<string, unknown> } | null;
-export type RunInput = { messages: ChatTurn[]; mode?: AssistantMode; confirm?: ConfirmInput };
+export type RunInput = { messages: ChatTurn[]; mode?: AssistantMode; confirm?: ConfirmInput; actor?: string };
 
 type RawToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 type LoopMsg = {
@@ -97,6 +97,42 @@ function normalizeHistory(messages: ChatTurn[]): LoopMsg[] {
     .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_MSG_CHARS) }));
 }
 
+const COLUMN_LABEL: Record<string, string> = { todo: "To Do", in_progress: "In Progress", done: "Done" };
+const columnLabel = (s: unknown) => COLUMN_LABEL[String(s)] ?? "To Do";
+
+/**
+ * Deterministic, server-computed description of a proposed write — shown on the Confirm
+ * card so the owner sees the REAL change (the target card's actual title + the exact
+ * effect), independent of the model's free-text preamble (Forge MED fix). Hydrates the
+ * card title for move/edit/delete; normalizes add_card's landing column to the truth.
+ */
+async function describeWrite(env: AppEnv, toolName: string, args: Record<string, unknown>): Promise<string> {
+  const id = String(args.id ?? "");
+  const titleOf = async (): Promise<string> => {
+    if (!id) return "a card";
+    const cards = await listCards(env, 500);
+    return cards.find((c) => c.id === id)?.title ?? `card ${id}`;
+  };
+  switch (toolName) {
+    case "add_card": {
+      const status = ["todo", "in_progress", "done"].includes(String(args.status)) ? args.status : "todo";
+      return `Add a card "${String(args.title ?? "")}" to ${columnLabel(status)}`;
+    }
+    case "move_card":
+      return `Move "${await titleOf()}" → ${columnLabel(args.status)}`;
+    case "edit_card": {
+      const parts: string[] = [];
+      if (args.title !== undefined) parts.push(`title → "${String(args.title)}"`);
+      if (args.notes !== undefined) parts.push("notes updated");
+      return `Edit "${await titleOf()}"${parts.length ? ": " + parts.join(", ") : ""}`;
+    }
+    case "delete_card":
+      return `Delete "${await titleOf()}"`;
+    default:
+      return toolName;
+  }
+}
+
 /** Opt-in Anthropic Q&A fallback (no tools) — only when configured AND GLM failed. */
 async function tryAnthropic(env: AppEnv, system: string, question: string): Promise<AssistantAnswer | null> {
   if (!env.ANTHROPIC_API_KEY || !env.AI_GATEWAY_BASE_URL) return null;
@@ -142,8 +178,9 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
       return { answer: "That action isn't available.", model, source: "workers-ai", mode, pending: null };
     }
     const args = input.confirm.args && typeof input.confirm.args === "object" ? input.confirm.args : {};
+    const actor = input.actor ? `assistant:${input.actor}` : "assistant";
     try {
-      await tool.run(env, args);
+      await tool.run(env, args, actor);
       const summary = tool.summarize(args);
       return { answer: `✅ ${summary} — done.`, model, source: "workers-ai", mode, pending: null, committed: { tool: tool.name, summary } };
     } catch (e) {
@@ -184,13 +221,14 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
       const tool = TOOLS_BY_NAME[firstWrite.function.name]!;
       const args = safeParseArgs(firstWrite.function.arguments);
       const summary = tool.summarize(args);
+      const detail = await describeWrite(env, tool.name, args);
       const preamble = (message.content ?? "").toString().trim();
       return {
-        answer: preamble || `I can do this: ${summary}. Confirm?`,
+        answer: preamble || `Ready when you are — confirm below.`,
         model,
         source: "workers-ai",
         mode,
-        pending: { tool: tool.name, args, summary },
+        pending: { tool: tool.name, args, summary, detail },
       };
     }
 

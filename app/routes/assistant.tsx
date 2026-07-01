@@ -10,7 +10,7 @@ export function meta(_: Route.MetaArgs) {
 
 type Turn = { role: "you" | "assistant"; text: string; meta?: string };
 type Mode = "fast" | "reasoning";
-type Pending = { tool: string; args: Record<string, unknown>; summary: string };
+type Pending = { tool: string; args: Record<string, unknown>; summary: string; detail: string };
 type AssistantRes = {
   answer: string;
   model: string;
@@ -127,8 +127,10 @@ export default function Assistant() {
 
         {pending && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
-            <div className="mb-2 font-medium text-amber-900">Confirm this change</div>
-            <div className="mb-3 text-amber-800">{pending.summary}</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
+              Confirm this exact change
+            </div>
+            <div className="mb-3 font-medium text-amber-900">{pending.detail || pending.summary}</div>
             <div className="flex gap-2">
               <Button type="button" onClick={confirmWrite} disabled={busy}>
                 <Check className="h-4 w-4" /> Confirm

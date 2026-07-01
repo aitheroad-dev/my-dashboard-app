@@ -33,7 +33,7 @@ export interface AgentTool {
   description: string;
   /** JSON Schema for the function arguments (OpenAI tools format). */
   parameters: Record<string, unknown>;
-  run: (env: AppEnv, args: Record<string, unknown>) => Promise<unknown>;
+  run: (env: AppEnv, args: Record<string, unknown>, actor?: string) => Promise<unknown>;
   /** Human-readable one-liner for the Confirm card + audit-facing text. */
   summarize: (args: Record<string, unknown>) => string;
 }
@@ -94,11 +94,11 @@ export const AGENT_TOOLS: AgentTool[] = [
       properties: { title: { type: "string" }, notes: { type: "string" }, status: CARD_STATUS },
       required: ["title"],
     },
-    run: (env, a) =>
+    run: (env, a, actor) =>
       addCard(
         env,
         { title: str(a.title), notes: a.notes == null ? null : str(a.notes), status: str(a.status) || undefined },
-        "assistant",
+        actor || "assistant",
       ),
     summarize: (a) => `Add card "${str(a.title)}"${a.status ? ` to ${str(a.status)}` : ""}`,
   },
@@ -111,7 +111,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       properties: { id: { type: "string" }, status: CARD_STATUS },
       required: ["id", "status"],
     },
-    run: (env, a) => moveCard(env, { id: str(a.id), status: str(a.status) }, "assistant"),
+    run: (env, a, actor) => moveCard(env, { id: str(a.id), status: str(a.status) }, actor || "assistant"),
     summarize: (a) => `Move card ${str(a.id)} to ${str(a.status)}`,
   },
   {
@@ -123,7 +123,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       properties: { id: { type: "string" }, title: { type: "string" }, notes: { type: "string" } },
       required: ["id"],
     },
-    run: (env, a) =>
+    run: (env, a, actor) =>
       editCard(
         env,
         {
@@ -131,7 +131,7 @@ export const AGENT_TOOLS: AgentTool[] = [
           title: a.title === undefined ? undefined : str(a.title),
           notes: a.notes === undefined ? undefined : a.notes == null ? null : str(a.notes),
         },
-        "assistant",
+        actor || "assistant",
       ),
     summarize: (a) => `Edit card ${str(a.id)}`,
   },
@@ -140,7 +140,7 @@ export const AGENT_TOOLS: AgentTool[] = [
     kind: "write",
     description: "Delete a card from the board. Needs the card id.",
     parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-    run: (env, a) => deleteCard(env, { id: str(a.id) }, "assistant"),
+    run: (env, a, actor) => deleteCard(env, { id: str(a.id) }, actor || "assistant"),
     summarize: (a) => `Delete card ${str(a.id)}`,
   },
 ];

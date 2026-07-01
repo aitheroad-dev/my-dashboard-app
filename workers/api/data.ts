@@ -349,7 +349,7 @@ data.post("/assistant", async (c) => {
   }
 
   // Conversation: prefer `messages` [{role,content}]; fall back to a single `question`.
-  const rawMsgs = Array.isArray(body.messages) ? body.messages : [];
+  const rawMsgs = (Array.isArray(body.messages) ? body.messages : []).slice(-24);
   const messages = rawMsgs
     .map((m) => ({
       role: ((m as { role?: unknown }).role === "assistant" ? "assistant" : "user") as "user" | "assistant",
@@ -376,8 +376,9 @@ data.post("/assistant", async (c) => {
   if (!confirm && messages.length === 0) return c.json({ error: "Ask a question." }, 400);
 
   try {
-    return c.json(await runAssistant(c.env, { messages, mode, confirm }));
+    return c.json(await runAssistant(c.env, { messages, mode, confirm, actor: viewer.email }));
   } catch (e) {
-    return c.json({ error: `assistant failed: ${(e as Error).message}` }, 502);
+    console.error("assistant error:", (e as Error).message);
+    return c.json({ error: "The assistant is temporarily unavailable." }, 502);
   }
 });
