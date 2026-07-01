@@ -207,3 +207,5 @@ wrangler.*.jsonc
 
 # Local-only design docs (self-declared "do not commit"; hold fork infra IDs + cred paths; repo is public)
 Plans/
+# ISA = the builder's design doc + local SoR; names the maintainer + fork refs → must never ship in a cloned fork
+/ISA.md
