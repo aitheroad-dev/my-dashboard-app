@@ -27,6 +27,14 @@ function isCardStatus(s: unknown): s is CardStatus {
   return typeof s === "string" && (CARD_STATUSES as readonly string[]).includes(s);
 }
 
+export const CARD_PRIORITIES = ["none", "low", "medium", "high"] as const;
+export type CardPriority = (typeof CARD_PRIORITIES)[number];
+const isCardPriority = (p: unknown): p is CardPriority =>
+  typeof p === "string" && (CARD_PRIORITIES as readonly string[]).includes(p);
+
+export type CardLabel = { name: string; color: string };
+export type ChecklistItem = { text: string; done: boolean };
+
 export type CardRow = {
   id: string;
   title: string;
@@ -35,16 +43,88 @@ export type CardRow = {
   position: number;
   created_at: string;
   updated_at: string;
+  due_date: string | null;
+  priority: CardPriority;
+  labels: CardLabel[];
+  checklist: ChecklistItem[];
 };
+
+// ---- Sanitizers for the richer-card fields (0006). Bound every array + validate
+// shape so a bad client payload OR a corrupt DB row can never crash a read/write.
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+function parseLabels(raw: unknown): CardLabel[] {
+  try {
+    const arr = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((l) => l && typeof l === "object")
+      .map((l) => ({
+        name: String((l as CardLabel).name ?? "").trim().slice(0, 40),
+        color: HEX_COLOR.test(String((l as CardLabel).color)) ? String((l as CardLabel).color) : "#64748b",
+      }))
+      .filter((l) => l.name)
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+function parseChecklist(raw: unknown): ChecklistItem[] {
+  try {
+    const arr = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((i) => i && typeof i === "object")
+      .map((i) => ({ text: String((i as ChecklistItem).text ?? "").trim().slice(0, 200), done: Boolean((i as ChecklistItem).done) }))
+      .filter((i) => i.text)
+      .slice(0, 50);
+  } catch {
+    return [];
+  }
+}
+function normalizeDueDate(raw: unknown): string | null {
+  if (raw == null || raw === "") return null;
+  const s = String(raw).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+type CardDbRow = {
+  id: string;
+  title: string;
+  notes: string | null;
+  status: CardStatus;
+  position: number;
+  created_at: string;
+  updated_at: string;
+  due_date: string | null;
+  priority: string;
+  labels: string | null;
+  checklist: string | null;
+};
+function rowToCard(r: CardDbRow): CardRow {
+  return {
+    id: r.id,
+    title: r.title,
+    notes: r.notes,
+    status: r.status,
+    position: r.position,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    due_date: normalizeDueDate(r.due_date),
+    priority: isCardPriority(r.priority) ? r.priority : "none",
+    labels: parseLabels(r.labels),
+    checklist: parseChecklist(r.checklist),
+  };
+}
 
 export async function listCards(env: AppEnv, limit = 500): Promise<CardRow[]> {
   const sql = getDb(env);
-  return sql<CardRow>`
-    SELECT id, title, notes, status, position, created_at, updated_at
+  const rows = await sql<CardDbRow>`
+    SELECT id, title, notes, status, position, created_at, updated_at, due_date, priority, labels, checklist
     FROM cards
     ORDER BY status ASC, position ASC, created_at ASC
     LIMIT ${limit}
   `;
+  return rows.map(rowToCard);
 }
 
 // Self-defending bounds enforced in the SERVICE so every caller (HTTP + MCP) is
@@ -74,53 +154,76 @@ async function nextPosition(env: AppEnv, status: CardStatus): Promise<number> {
  * writes by construction). `actor` distinguishes an owner UI action (email/"owner-ui")
  * from an MCP call ("mcp-bearer").
  */
+export type CardWriteFields = {
+  due_date?: string | null;
+  priority?: string;
+  labels?: unknown;
+  checklist?: unknown;
+};
+
 export async function addCard(
   env: AppEnv,
-  input: { title: string; notes?: string | null; status?: string },
+  input: { title: string; notes?: string | null; status?: string } & CardWriteFields,
   actor = "owner-ui",
 ): Promise<CardRow> {
   const title = String(input.title ?? "").trim();
   const notes = input.notes == null ? null : String(input.notes).trim() || null;
   const status: CardStatus = isCardStatus(input.status) ? input.status : "todo";
   assertCardWritable(title, notes);
+  const due_date = normalizeDueDate(input.due_date);
+  const priority: CardPriority = isCardPriority(input.priority) ? input.priority : "none";
+  const labels = parseLabels(input.labels);
+  const checklist = parseChecklist(input.checklist);
   const id = crypto.randomUUID();
   const position = await nextPosition(env, status);
   const ts = nowIso();
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO cards (id, title, notes, status, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).bind(id, title, notes, status, position, ts, ts),
+      "INSERT INTO cards (id, title, notes, status, position, created_at, updated_at, due_date, priority, labels, checklist) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, title, notes, status, position, ts, ts, due_date, priority, JSON.stringify(labels), JSON.stringify(checklist)),
     env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
       "add_card", id, actor, `Added card "${title}" to ${status}`, ts,
     ),
   ]);
-  return { id, title, notes, status, position, created_at: ts, updated_at: ts };
+  return { id, title, notes, status, position, created_at: ts, updated_at: ts, due_date, priority, labels, checklist };
 }
 
 export async function editCard(
   env: AppEnv,
-  input: { id: string; title?: string; notes?: string | null },
+  input: { id: string; title?: string; notes?: string | null } & CardWriteFields,
   actor = "owner-ui",
 ): Promise<CardRow> {
   const id = String(input.id ?? "").trim();
   const current = await env.DB.prepare(
-    "SELECT id, title, notes, status, position, created_at FROM cards WHERE id = ?",
+    "SELECT id, title, notes, status, position, created_at, due_date, priority, labels, checklist FROM cards WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; title: string; notes: string | null; status: CardStatus; position: number; created_at: string }>();
+    .first<CardDbRow>();
   if (!current) throw new Error(`no card with id "${id}"`);
   const title = input.title !== undefined ? String(input.title).trim() : current.title;
   const notes =
     input.notes !== undefined ? (input.notes == null ? null : String(input.notes).trim() || null) : current.notes;
   assertCardWritable(title, notes);
+  const due_date = input.due_date !== undefined ? normalizeDueDate(input.due_date) : normalizeDueDate(current.due_date);
+  const priority: CardPriority =
+    input.priority !== undefined
+      ? isCardPriority(input.priority) ? input.priority : "none"
+      : isCardPriority(current.priority) ? current.priority : "none";
+  const labels = input.labels !== undefined ? parseLabels(input.labels) : parseLabels(current.labels);
+  const checklist = input.checklist !== undefined ? parseChecklist(input.checklist) : parseChecklist(current.checklist);
   const ts = nowIso();
   await env.DB.batch([
-    env.DB.prepare("UPDATE cards SET title = ?, notes = ?, updated_at = ? WHERE id = ?").bind(title, notes, ts, id),
+    env.DB.prepare(
+      "UPDATE cards SET title = ?, notes = ?, due_date = ?, priority = ?, labels = ?, checklist = ?, updated_at = ? WHERE id = ?",
+    ).bind(title, notes, due_date, priority, JSON.stringify(labels), JSON.stringify(checklist), ts, id),
     env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
       "edit_card", id, actor, `Edited card "${title}"`, ts,
     ),
   ]);
-  return { id, title, notes, status: current.status, position: current.position, created_at: current.created_at, updated_at: ts };
+  return {
+    id, title, notes, status: current.status, position: current.position,
+    created_at: current.created_at, updated_at: ts, due_date, priority, labels, checklist,
+  };
 }
 
 export async function moveCard(
@@ -133,10 +236,10 @@ export async function moveCard(
     throw new Error(`invalid status "${input.status}" (use todo, in_progress, or done)`);
   const status = input.status;
   const current = await env.DB.prepare(
-    "SELECT id, title, notes, status, position, created_at FROM cards WHERE id = ?",
+    "SELECT id, title, notes, status, position, created_at, updated_at, due_date, priority, labels, checklist FROM cards WHERE id = ?",
   )
     .bind(id)
-    .first<{ id: string; title: string; notes: string | null; status: CardStatus; position: number; created_at: string }>();
+    .first<CardDbRow>();
   if (!current) throw new Error(`no card with id "${id}"`);
   const position =
     typeof input.position === "number" && Number.isFinite(input.position)
@@ -149,7 +252,7 @@ export async function moveCard(
       "move_card", id, actor, `Moved card "${current.title}" to ${status}`, ts,
     ),
   ]);
-  return { id, title: current.title, notes: current.notes, status, position, created_at: current.created_at, updated_at: ts };
+  return { ...rowToCard(current), status, position, updated_at: ts };
 }
 
 export async function deleteCard(

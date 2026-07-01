@@ -72,7 +72,10 @@ async function ownerOrResponse(c: {
 data.post("/cards", async (c) => {
   const gate = await ownerOrResponse(c);
   if (gate instanceof Response) return gate;
-  let body: { title?: unknown; notes?: unknown; status?: unknown };
+  let body: {
+    title?: unknown; notes?: unknown; status?: unknown;
+    due_date?: unknown; priority?: unknown; labels?: unknown; checklist?: unknown;
+  };
   try {
     body = await c.req.json();
   } catch {
@@ -85,6 +88,10 @@ data.post("/cards", async (c) => {
         title: String(body.title ?? ""),
         notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
         status: body.status === undefined ? undefined : String(body.status),
+        due_date: body.due_date === undefined ? undefined : body.due_date === null ? null : String(body.due_date),
+        priority: body.priority === undefined ? undefined : String(body.priority),
+        labels: body.labels,
+        checklist: body.checklist,
       },
       gate.email,
     );
@@ -100,7 +107,10 @@ data.put("/cards/:id", async (c) => {
   const gate = await ownerOrResponse(c);
   if (gate instanceof Response) return gate;
   const id = c.req.param("id");
-  let body: { title?: unknown; notes?: unknown; status?: unknown; position?: unknown };
+  let body: {
+    title?: unknown; notes?: unknown; status?: unknown; position?: unknown;
+    due_date?: unknown; priority?: unknown; labels?: unknown; checklist?: unknown;
+  };
   try {
     body = await c.req.json();
   } catch {
@@ -125,6 +135,10 @@ data.put("/cards/:id", async (c) => {
         id,
         title: body.title === undefined ? undefined : String(body.title),
         notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
+        due_date: body.due_date === undefined ? undefined : body.due_date === null ? null : String(body.due_date),
+        priority: body.priority === undefined ? undefined : String(body.priority),
+        labels: body.labels,
+        checklist: body.checklist,
       },
       gate.email,
     );
