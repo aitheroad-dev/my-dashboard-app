@@ -4,8 +4,11 @@ import { getViewer, requireViewer } from "../lib/viewer";
 import { runAssistant } from "../services/assistant";
 import {
   clampLimit,
-  listProjects,
-  listGoals,
+  listCards,
+  addCard,
+  editCard,
+  moveCard,
+  deleteCard,
   getPortfolio,
   readSettings,
   writeSettings,
@@ -41,16 +44,104 @@ function limitOf(c: { req: { url: string } }): number {
   return clampLimit(new URL(c.req.url).searchParams.get("limit"));
 }
 
-data.get("/projects", async (c) => {
+// ---- Board (cards). Reads = any signed-in viewer; writes = owner only, each
+// audited in mcp_activity via the service layer (same trail as MCP writes). ----
+
+data.get("/cards", async (c) => {
   const viewer = await getViewer(c.req.raw, c.env);
   if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  return c.json(await listProjects(c.env, limitOf(c)));
+  return c.json(await listCards(c.env, limitOf(c)));
 });
 
-data.get("/goals", async (c) => {
-  const viewer = await getViewer(c.req.raw, c.env);
-  if (!viewer) return c.json({ error: "unauthorized" }, 401);
-  return c.json(await listGoals(c.env, limitOf(c)));
+async function ownerOrResponse(c: {
+  req: { raw: Request };
+  env: AppEnv;
+  json: (o: unknown, s?: number) => Response;
+}): Promise<{ email: string } | Response> {
+  let viewer;
+  try {
+    viewer = await requireViewer(c.req.raw, c.env);
+  } catch (res) {
+    if (res instanceof Response) return res;
+    throw res;
+  }
+  if (!viewer.isOwner) return c.json({ error: "owner only" }, 403);
+  return { email: viewer.email || "owner-ui" };
+}
+
+data.post("/cards", async (c) => {
+  const gate = await ownerOrResponse(c);
+  if (gate instanceof Response) return gate;
+  let body: { title?: unknown; notes?: unknown; status?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    const card = await addCard(
+      c.env,
+      {
+        title: String(body.title ?? ""),
+        notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
+        status: body.status === undefined ? undefined : String(body.status),
+      },
+      gate.email,
+    );
+    return c.json(card, 201);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+// PUT = move (when `status` is present) OR edit (title/notes). The board UI issues
+// these as separate actions, so the either/or keeps each write single-purpose.
+data.put("/cards/:id", async (c) => {
+  const gate = await ownerOrResponse(c);
+  if (gate instanceof Response) return gate;
+  const id = c.req.param("id");
+  let body: { title?: unknown; notes?: unknown; status?: unknown; position?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  try {
+    if (body.status !== undefined) {
+      const card = await moveCard(
+        c.env,
+        {
+          id,
+          status: String(body.status),
+          position: typeof body.position === "number" ? body.position : undefined,
+        },
+        gate.email,
+      );
+      return c.json(card);
+    }
+    const card = await editCard(
+      c.env,
+      {
+        id,
+        title: body.title === undefined ? undefined : String(body.title),
+        notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
+      },
+      gate.email,
+    );
+    return c.json(card);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+data.delete("/cards/:id", async (c) => {
+  const gate = await ownerOrResponse(c);
+  if (gate instanceof Response) return gate;
+  try {
+    return c.json(await deleteCard(c.env, { id: c.req.param("id") }, gate.email));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 404);
+  }
 });
 
 data.get("/portfolio", async (c) => {

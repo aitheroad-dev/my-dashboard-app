@@ -5,7 +5,7 @@ import type { AppEnv } from "./env";
  * UNCHANGED so handler call sites keep their `sql`...`` shape.
  *
  *   const sql = getDb(env);
- *   const rows = await sql`SELECT * FROM projects ORDER BY created_at DESC`;
+ *   const rows = await sql`SELECT * FROM cards ORDER BY position ASC`;
  *   const [row] = await sql`INSERT ... RETURNING id`;
  *
  * Contract:

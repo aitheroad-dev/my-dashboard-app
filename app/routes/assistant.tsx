@@ -45,7 +45,7 @@ export default function Assistant() {
         {turns.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Sparkles className="h-4 w-4 shrink-0" />
-            Ask something like &ldquo;What projects do I have?&rdquo; or &ldquo;Summarize my goals.&rdquo;
+            Ask something like &ldquo;What&rsquo;s on my board?&rdquo; or &ldquo;What should I do next?&rdquo;
           </div>
         ) : (
           turns.map((t, i) => (

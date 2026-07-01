@@ -8,8 +8,7 @@ import {
 export default [
   layout("components/Shell.tsx", [
     index("routes/home.tsx"),
-    route("projects", "routes/projects.tsx"),
-    route("goals", "routes/goals.tsx"),
+    route("board", "routes/board.tsx"),
     route("portfolio", "routes/portfolio.tsx"),
     route("tools", "routes/tools.tsx"),
     route("kb", "routes/kb.tsx"),

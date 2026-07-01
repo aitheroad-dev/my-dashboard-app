@@ -1,13 +1,8 @@
 import { Link } from "react-router";
-import { FolderKanban, Target, LineChart, Sparkles } from "lucide-react";
+import { ListTodo, CircleDashed, CheckCircle2, LineChart, Sparkles } from "lucide-react";
 import type { Route } from "./+types/home";
-import {
-  useMe,
-  useProjects,
-  useGoals,
-  useSettings,
-} from "../lib/api";
-import { PageHeader, StatCard, Card, StatusBadge, Loading } from "../components/ui";
+import { useMe, useCards, useSettings } from "../lib/api";
+import { PageHeader, StatCard, Card, Loading } from "../components/ui";
 
 export function meta(_: Route.MetaArgs) {
   return [
@@ -19,14 +14,14 @@ export function meta(_: Route.MetaArgs) {
 export default function Home() {
   const me = useMe();
   const settings = useSettings();
-  const projects = useProjects();
-  const goals = useGoals();
+  const cards = useCards();
 
   const name = settings.data?.display_name ?? "My Dashboard";
-  const activeProjects =
-    projects.data?.filter((p) => p.status === "active").length ?? 0;
-  const activeGoals = goals.data?.filter((g) => g.status === "active").length ?? 0;
-  const recentProjects = projects.data?.slice(0, 4) ?? [];
+  const all = cards.data ?? [];
+  const todo = all.filter((c) => c.status === "todo");
+  const inProgress = all.filter((c) => c.status === "in_progress");
+  const done = all.filter((c) => c.status === "done");
+  const upNext = [...inProgress, ...todo].slice(0, 5);
 
   return (
     <div>
@@ -39,9 +34,10 @@ export default function Home() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <StatCard label="Active projects" value={activeProjects} icon={FolderKanban} />
-        <StatCard label="Active goals" value={activeGoals} icon={Target} />
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatCard label="To do" value={todo.length} icon={ListTodo} />
+        <StatCard label="In progress" value={inProgress.length} icon={CircleDashed} />
+        <StatCard label="Done" value={done.length} icon={CheckCircle2} />
         <StatCard label="Portfolio" value="—" icon={LineChart} />
       </div>
 
@@ -57,39 +53,39 @@ export default function Home() {
         </div>
       </Card>
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Recent projects
-      </h2>
-      {projects.isLoading ? (
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Up next
+        </h2>
+        <Link to="/board" className="text-sm font-medium text-slate-900 underline">
+          Open the board
+        </Link>
+      </div>
+      {cards.isLoading ? (
         <Loading />
-      ) : recentProjects.length === 0 ? (
+      ) : upNext.length === 0 ? (
         <Card className="text-sm text-slate-500">
-          No projects yet.{" "}
-          <Link to="/projects" className="font-medium text-slate-900 underline">
-            Go to Projects
+          Nothing on your board yet.{" "}
+          <Link to="/board" className="font-medium text-slate-900 underline">
+            Add your first task
           </Link>
           .
         </Card>
       ) : (
         <div className="space-y-2">
-          {recentProjects.map((p) => (
+          {upNext.map((c) => (
             <Link
-              key={p.id}
-              to="/projects"
+              key={c.id}
+              to="/board"
               className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
             >
               <div className="min-w-0">
-                <div className="truncate font-medium text-slate-900">{p.name}</div>
-                {p.mission && (
-                  <div className="truncate text-slate-500">{p.mission}</div>
-                )}
+                <div className="truncate font-medium text-slate-900">{c.title}</div>
+                {c.notes && <div className="truncate text-slate-500">{c.notes}</div>}
               </div>
-              <div className="ml-3 flex shrink-0 items-center gap-3">
-                <span className="text-xs text-slate-400">
-                  {p.goal_count} goal{p.goal_count === 1 ? "" : "s"}
-                </span>
-                <StatusBadge status={p.status} />
-              </div>
+              <span className="ml-3 shrink-0 text-xs text-slate-400">
+                {c.status === "in_progress" ? "In progress" : "To do"}
+              </span>
             </Link>
           ))}
         </div>

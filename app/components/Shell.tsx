@@ -6,7 +6,7 @@ import { cn } from "../lib/utils";
 
 // Shown instantly while /api/settings loads (avoids an empty-sidebar flash on
 // first paint / SSR). Matches the server's DEFAULT_ENABLED.
-const FALLBACK_PAGES: PageKey[] = ["home", "projects", "goals", "portfolio", "tools", "kb"];
+const FALLBACK_PAGES: PageKey[] = ["home", "board", "portfolio", "tools", "kb"];
 
 /**
  * App shell (ISC-34): a left sidebar whose entries are the ENABLED pages in the

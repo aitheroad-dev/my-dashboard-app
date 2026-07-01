@@ -50,7 +50,7 @@ export const apiDelete = <T>(path: string) => request<T>(path, { method: "DELETE
 // ---- Shared types (mirror the server shapes) ----
 
 export type Theme = "light" | "dark" | "system";
-export type PageKey = "home" | "projects" | "goals" | "portfolio" | "tools" | "kb" | "assistant";
+export type PageKey = "home" | "board" | "portfolio" | "tools" | "kb" | "assistant";
 
 export interface Config {
   schemaVersion: number;
@@ -147,25 +147,14 @@ export interface Me {
   mode: "access" | "open-dev";
 }
 
-export interface Project {
-  id: string;
-  slug: string;
-  name: string;
-  mission: string | null;
-  status: string;
-  goal_count: number;
-  created_at: string;
-  updated_at: string;
-}
+export type CardStatus = "todo" | "in_progress" | "done";
 
-export interface Goal {
+export interface Card {
   id: string;
-  slug: string;
-  project_id: string | null;
-  project_name: string | null;
   title: string;
-  description: string | null;
-  status: string;
+  notes: string | null;
+  status: CardStatus;
+  position: number;
   created_at: string;
   updated_at: string;
 }
@@ -193,14 +182,64 @@ export const useSettings = () =>
     queryFn: () => apiGet<Settings>("/api/settings"),
   });
 
-export const useProjects = () =>
-  useQuery({
-    queryKey: ["projects"],
-    queryFn: () => apiGet<Project[]>("/api/projects"),
-  });
+export const useCards = () =>
+  useQuery({ queryKey: ["cards"], queryFn: () => apiGet<Card[]>("/api/cards") });
 
-export const useGoals = () =>
-  useQuery({ queryKey: ["goals"], queryFn: () => apiGet<Goal[]>("/api/goals") });
+export const useAddCard = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { title: string; notes?: string | null; status?: CardStatus }) =>
+      apiPost<Card>("/api/cards", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+};
+
+export const useEditCard = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: string; title?: string; notes?: string | null }) =>
+      apiPut<Card>(`/api/cards/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+};
+
+/** Move = optimistic so the drag lands instantly; reconcile against the server on settle. */
+export const useMoveCard = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status, position }: { id: string; status: CardStatus; position?: number }) =>
+      apiPut<Card>(`/api/cards/${id}`, { status, position }),
+    onMutate: async ({ id, status, position }) => {
+      await qc.cancelQueries({ queryKey: ["cards"] });
+      const prev = qc.getQueryData<Card[]>(["cards"]);
+      qc.setQueryData<Card[]>(["cards"], (old) =>
+        (old ?? []).map((c) => (c.id === id ? { ...c, status, position: position ?? c.position } : c)),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["cards"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+};
+
+export const useDeleteCard = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete<{ id: string; deleted: boolean }>(`/api/cards/${id}`),
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["cards"] });
+      const prev = qc.getQueryData<Card[]>(["cards"]);
+      qc.setQueryData<Card[]>(["cards"], (old) => (old ?? []).filter((c) => c.id !== id));
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["cards"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["cards"] }),
+  });
+};
 
 export const usePortfolio = () =>
   useQuery({

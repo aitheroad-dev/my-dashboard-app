@@ -1,7 +1,6 @@
 import {
   Home,
-  FolderKanban,
-  Target,
+  SquareKanban,
   LineChart,
   Wrench,
   BookOpen,
@@ -25,8 +24,7 @@ export interface PageMeta {
 
 export const PAGE_META: Record<PageKey, PageMeta> = {
   home: { key: "home", label: "Home", path: "/", icon: Home },
-  projects: { key: "projects", label: "Projects", path: "/projects", icon: FolderKanban },
-  goals: { key: "goals", label: "Goals", path: "/goals", icon: Target },
+  board: { key: "board", label: "Board", path: "/board", icon: SquareKanban },
   portfolio: { key: "portfolio", label: "Portfolio", path: "/portfolio", icon: LineChart },
   tools: { key: "tools", label: "Tools", path: "/tools", icon: Wrench },
   kb: { key: "kb", label: "Knowledge Base", path: "/kb", icon: BookOpen },
@@ -35,13 +33,11 @@ export const PAGE_META: Record<PageKey, PageMeta> = {
 
 /**
  * Pages that actually have a wired route. Settings only offers toggles/reorder for
- * these — so enabling a page can never link the sidebar to a 404. Grows per phase:
- * P1 = home/projects/goals/portfolio; P2 adds tools/kb.
+ * these — so enabling a page can never link the sidebar to a 404.
  */
 export const BUILT_PAGES: PageKey[] = [
   "home",
-  "projects",
-  "goals",
+  "board",
   "portfolio",
   "tools",
   "kb",

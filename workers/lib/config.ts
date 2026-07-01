@@ -12,13 +12,13 @@ import { z } from "zod";
  *      an older one — it is simply dropped if unknown. (ISC-32, ISC-36, ISC-37.)
  */
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
-/** v1 page set. Adding a key here is additive — never renumber/remove silently. */
+/** Page set. Adding a key here is additive — never renumber/remove silently.
+ * v2 retired projects/goals in favor of a single Board (Kanban) page. */
 export const PAGE_KEYS = [
   "home",
-  "projects",
-  "goals",
+  "board",
   "portfolio",
   "tools",
   "kb",
@@ -28,12 +28,10 @@ export type PageKey = (typeof PAGE_KEYS)[number];
 
 const KNOWN_PAGES = new Set<string>(PAGE_KEYS);
 
-/** Pages a brand-new fork shows by default — the six v1 pages (Tools shows a
- * "not configured" state until the recipient adds their key). */
+/** Pages a brand-new fork shows by default — all six current pages. */
 export const DEFAULT_ENABLED: PageKey[] = [
   "home",
-  "projects",
-  "goals",
+  "board",
   "portfolio",
   "tools",
   "kb",
@@ -74,6 +72,32 @@ function uniq<T>(xs: T[]): T[] {
 }
 
 /**
+ * v2 page-key migration: drop the retired "projects"/"goals" keys and put "board"
+ * where the first of them sat (or at the front if neither was present). Tolerant of
+ * a non-array/garbage stored value — falls back to the provided default list.
+ */
+function swapBoardKeys(stored: unknown, fallback: string[]): string[] {
+  const list = Array.isArray(stored)
+    ? stored.filter((k): k is string => typeof k === "string")
+    : [...fallback];
+  const out: string[] = [];
+  const alreadyHasBoard = list.includes("board");
+  let boardInserted = alreadyHasBoard;
+  for (const key of list) {
+    if (key === "projects" || key === "goals") {
+      if (!boardInserted) {
+        out.push("board");
+        boardInserted = true;
+      }
+      continue; // drop the retired key
+    }
+    out.push(key);
+  }
+  if (!boardInserted) out.unshift("board");
+  return uniq(out);
+}
+
+/**
  * Post-parse normalization: keep only known page keys, dedupe, and ensure
  * page_order covers every known page (enabled first, then the rest) so the
  * sidebar is always deterministic regardless of what was stored.
@@ -107,9 +131,15 @@ export function migrateConfig(raw: unknown): Config {
       ? { ...(raw as Record<string, unknown>) }
       : {};
 
-  // Stepwise migrations land here as the schema grows, e.g.:
-  //   if (version < 2) { obj.newField = derive(obj); version = 2; }
-  // v1 is current, so there is nothing to step yet.
+  // Stepwise migrations land here as the schema grows.
+  const version = typeof obj.schemaVersion === "number" ? obj.schemaVersion : 0;
+  if (version < 2) {
+    // v2: projects/goals retired in favor of a single Board page. Rewrite the
+    // stored page-key arrays so an EXISTING fork surfaces the Board where its
+    // projects/goals sat (runs on every read → the board shows without a resave).
+    obj.enabled_pages = swapBoardKeys(obj.enabled_pages, [...DEFAULT_ENABLED]);
+    obj.page_order = swapBoardKeys(obj.page_order, [...PAGE_KEYS]);
+  }
   obj.schemaVersion = CURRENT_SCHEMA_VERSION;
 
   // Per-field `.catch()` makes parse throw-proof for type errors; this guard is

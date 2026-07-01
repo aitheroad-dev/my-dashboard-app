@@ -19,59 +19,157 @@ export function clampLimit(raw: string | null, max = 1000): number {
   return Math.min(n, max);
 }
 
-// ---- Projects ----
+// ---- Board (cards) — the personal Kanban; replaces projects/goals ----
 
-export type ProjectRow = {
+export const CARD_STATUSES = ["todo", "in_progress", "done"] as const;
+export type CardStatus = (typeof CARD_STATUSES)[number];
+function isCardStatus(s: unknown): s is CardStatus {
+  return typeof s === "string" && (CARD_STATUSES as readonly string[]).includes(s);
+}
+
+export type CardRow = {
   id: string;
-  slug: string;
-  name: string;
-  mission: string | null;
-  status: string;
-  goal_count: number;
+  title: string;
+  notes: string | null;
+  status: CardStatus;
+  position: number;
   created_at: string;
   updated_at: string;
 };
 
-export async function listProjects(env: AppEnv, limit = 500): Promise<ProjectRow[]> {
+export async function listCards(env: AppEnv, limit = 500): Promise<CardRow[]> {
   const sql = getDb(env);
-  return sql<ProjectRow>`
-    SELECT
-      p.id, p.slug, p.name, p.mission, p.status,
-      (SELECT COUNT(*) FROM goals g WHERE g.project_id = p.id) AS goal_count,
-      p.created_at, p.updated_at
-    FROM projects p
-    ORDER BY p.created_at DESC
+  return sql<CardRow>`
+    SELECT id, title, notes, status, position, created_at, updated_at
+    FROM cards
+    ORDER BY status ASC, position ASC, created_at ASC
     LIMIT ${limit}
   `;
 }
 
-// ---- Goals ----
+// Self-defending bounds enforced in the SERVICE so every caller (HTTP + MCP) is
+// protected — not just a single zod layer at one entry point.
+const MAX_CARD_TITLE_LEN = 200;
+const MAX_CARD_NOTES_LEN = 2000;
+function assertCardWritable(title: string, notes: string | null): void {
+  if (!title) throw new Error("title is required");
+  if (title.length > MAX_CARD_TITLE_LEN) throw new Error(`title too long (max ${MAX_CARD_TITLE_LEN} characters)`);
+  if (notes !== null && notes.length > MAX_CARD_NOTES_LEN)
+    throw new Error(`notes too long (max ${MAX_CARD_NOTES_LEN} characters)`);
+}
 
-export type GoalRow = {
-  id: string;
-  slug: string;
-  project_id: string | null;
-  project_name: string | null;
-  title: string;
-  description: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-};
+/** Append position = one step past the current max in the target column. */
+async function nextPosition(env: AppEnv, status: CardStatus): Promise<number> {
+  const row = await env.DB.prepare(
+    "SELECT COALESCE(MAX(position), 0) AS maxpos FROM cards WHERE status = ?",
+  )
+    .bind(status)
+    .first<{ maxpos: number }>();
+  return (row?.maxpos ?? 0) + 1000;
+}
 
-export async function listGoals(env: AppEnv, limit = 500): Promise<GoalRow[]> {
-  const sql = getDb(env);
-  return sql<GoalRow>`
-    SELECT
-      g.id, g.slug, g.project_id,
-      p.name AS project_name,
-      g.title, g.description, g.status,
-      g.created_at, g.updated_at
-    FROM goals g
-    LEFT JOIN projects p ON p.id = g.project_id
-    ORDER BY g.created_at DESC
-    LIMIT ${limit}
-  `;
+/**
+ * Every card write commits the data change + exactly one mcp_activity audit row in
+ * ONE atomic D1 batch — same contract as the KB writers (audit-count == successful
+ * writes by construction). `actor` distinguishes an owner UI action (email/"owner-ui")
+ * from an MCP call ("mcp-bearer").
+ */
+export async function addCard(
+  env: AppEnv,
+  input: { title: string; notes?: string | null; status?: string },
+  actor = "owner-ui",
+): Promise<CardRow> {
+  const title = String(input.title ?? "").trim();
+  const notes = input.notes == null ? null : String(input.notes).trim() || null;
+  const status: CardStatus = isCardStatus(input.status) ? input.status : "todo";
+  assertCardWritable(title, notes);
+  const id = crypto.randomUUID();
+  const position = await nextPosition(env, status);
+  const ts = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO cards (id, title, notes, status, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).bind(id, title, notes, status, position, ts, ts),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "add_card", id, actor, `Added card "${title}" to ${status}`, ts,
+    ),
+  ]);
+  return { id, title, notes, status, position, created_at: ts, updated_at: ts };
+}
+
+export async function editCard(
+  env: AppEnv,
+  input: { id: string; title?: string; notes?: string | null },
+  actor = "owner-ui",
+): Promise<CardRow> {
+  const id = String(input.id ?? "").trim();
+  const current = await env.DB.prepare(
+    "SELECT id, title, notes, status, position, created_at FROM cards WHERE id = ?",
+  )
+    .bind(id)
+    .first<{ id: string; title: string; notes: string | null; status: CardStatus; position: number; created_at: string }>();
+  if (!current) throw new Error(`no card with id "${id}"`);
+  const title = input.title !== undefined ? String(input.title).trim() : current.title;
+  const notes =
+    input.notes !== undefined ? (input.notes == null ? null : String(input.notes).trim() || null) : current.notes;
+  assertCardWritable(title, notes);
+  const ts = nowIso();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE cards SET title = ?, notes = ?, updated_at = ? WHERE id = ?").bind(title, notes, ts, id),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "edit_card", id, actor, `Edited card "${title}"`, ts,
+    ),
+  ]);
+  return { id, title, notes, status: current.status, position: current.position, created_at: current.created_at, updated_at: ts };
+}
+
+export async function moveCard(
+  env: AppEnv,
+  input: { id: string; status: string; position?: number },
+  actor = "owner-ui",
+): Promise<CardRow> {
+  const id = String(input.id ?? "").trim();
+  if (!isCardStatus(input.status))
+    throw new Error(`invalid status "${input.status}" (use todo, in_progress, or done)`);
+  const status = input.status;
+  const current = await env.DB.prepare(
+    "SELECT id, title, notes, status, position, created_at FROM cards WHERE id = ?",
+  )
+    .bind(id)
+    .first<{ id: string; title: string; notes: string | null; status: CardStatus; position: number; created_at: string }>();
+  if (!current) throw new Error(`no card with id "${id}"`);
+  const position =
+    typeof input.position === "number" && Number.isFinite(input.position)
+      ? input.position
+      : await nextPosition(env, status);
+  const ts = nowIso();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE cards SET status = ?, position = ?, updated_at = ? WHERE id = ?").bind(status, position, ts, id),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "move_card", id, actor, `Moved card "${current.title}" to ${status}`, ts,
+    ),
+  ]);
+  return { id, title: current.title, notes: current.notes, status, position, created_at: current.created_at, updated_at: ts };
+}
+
+export async function deleteCard(
+  env: AppEnv,
+  input: { id: string },
+  actor = "owner-ui",
+): Promise<{ id: string; deleted: boolean }> {
+  const id = String(input.id ?? "").trim();
+  const current = await env.DB.prepare("SELECT id, title FROM cards WHERE id = ?")
+    .bind(id)
+    .first<{ id: string; title: string }>();
+  if (!current) throw new Error(`no card with id "${id}"`);
+  const ts = nowIso();
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM cards WHERE id = ?").bind(id),
+    env.DB.prepare("INSERT INTO mcp_activity (tool, target, actor, summary, ts) VALUES (?, ?, ?, ?, ?)").bind(
+      "delete_card", id, actor, `Deleted card "${current.title}"`, ts,
+    ),
+  ]);
+  return { id, deleted: true };
 }
 
 // ---- Portfolio (ships empty — a fork carries no personal holdings) ----

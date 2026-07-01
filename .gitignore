@@ -204,3 +204,6 @@ dist
 
 # Per-fork configs (contain resource IDs — never commit)
 wrangler.*.jsonc
+
+# Local-only design docs (self-declared "do not commit"; hold fork infra IDs + cred paths; repo is public)
+Plans/

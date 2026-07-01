@@ -3,8 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AppEnv } from "./lib/env";
 import {
-  listProjects,
-  listGoals,
+  listCards,
+  addCard,
+  editCard,
+  moveCard,
+  deleteCard,
   getPortfolio,
   readSettings,
   publicSettings,
@@ -39,21 +42,12 @@ function createReadServer(env: AppEnv): McpServer {
   const server = new McpServer({ name: "My Dashboard", version: "1.0.0" });
 
   server.registerTool(
-    "list_projects",
+    "list_cards",
     {
-      description: "List this dashboard's projects (with goal counts).",
+      description: "List this dashboard's board cards (columns: todo, in_progress, done).",
       inputSchema: { limit: z.number().int().positive().max(1000).optional() },
     },
-    async ({ limit }) => asText(await listProjects(env, limit ?? 500)),
-  );
-
-  server.registerTool(
-    "list_goals",
-    {
-      description: "List this dashboard's goals (with their project names).",
-      inputSchema: { limit: z.number().int().positive().max(1000).optional() },
-    },
-    async ({ limit }) => asText(await listGoals(env, limit ?? 500)),
+    async ({ limit }) => asText(await listCards(env, limit ?? 500)),
   );
 
   server.registerTool(
@@ -138,6 +132,101 @@ function createReadServer(env: AppEnv): McpServer {
       }
       try {
         return asText({ status: "updated", ...(await editKbDoc(env, { slug, title, blocks })) });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  // ---- Board (card) guarded WRITE tools — same confirm-gate + atomic audit ----
+  const CARD_STATUS = z.enum(["todo", "in_progress", "done"]);
+
+  server.registerTool(
+    "add_card",
+    {
+      description:
+        "Add a NEW card to the board. GUARDED: nothing is written unless confirm:true is passed (re-call to confirm). Defaults to the To Do column.",
+      inputSchema: {
+        title: z.string().min(1).max(200),
+        notes: z.string().max(2000).optional(),
+        status: CARD_STATUS.optional().describe("Target column; defaults to todo"),
+        confirm: z.boolean().optional().describe("Must be true to actually perform the write"),
+      },
+    },
+    async ({ title, notes, status, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "add_card", title, column: status ?? "todo", note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ result: "created", card: await addCard(env, { title, notes, status }, "mcp-bearer") });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  server.registerTool(
+    "move_card",
+    {
+      description:
+        "Move a card to a different column (todo / in_progress / done). GUARDED: nothing changes unless confirm:true is passed.",
+      inputSchema: {
+        id: z.string().min(1),
+        status: CARD_STATUS,
+        confirm: z.boolean().optional().describe("Must be true to actually perform the move"),
+      },
+    },
+    async ({ id, status, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "move_card", id, to: status, note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ result: "moved", card: await moveCard(env, { id, status }, "mcp-bearer") });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  server.registerTool(
+    "edit_card",
+    {
+      description:
+        "Edit an existing card's title and/or notes. GUARDED: nothing changes unless confirm:true is passed.",
+      inputSchema: {
+        id: z.string().min(1),
+        title: z.string().min(1).max(200).optional(),
+        notes: z.string().max(2000).optional(),
+        confirm: z.boolean().optional().describe("Must be true to actually perform the edit"),
+      },
+    },
+    async ({ id, title, notes, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "edit_card", id, note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ result: "updated", card: await editCard(env, { id, title, notes }, "mcp-bearer") });
+      } catch (e) {
+        return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_card",
+    {
+      description: "Delete a card from the board. GUARDED: nothing is deleted unless confirm:true is passed.",
+      inputSchema: {
+        id: z.string().min(1),
+        confirm: z.boolean().optional().describe("Must be true to actually delete"),
+      },
+    },
+    async ({ id, confirm }) => {
+      if (confirm !== true) {
+        return asText({ status: "confirmation_required", action: "delete_card", id, note: CONFIRM_HINT });
+      }
+      try {
+        return asText({ status: "deleted", ...(await deleteCard(env, { id }, "mcp-bearer")) });
       } catch (e) {
         return { ...asText({ status: "error", error: (e as Error).message }), isError: true as const };
       }
