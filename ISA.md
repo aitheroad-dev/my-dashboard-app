@@ -3,11 +3,11 @@ project: My Dashboard
 task: Build the shareable per-fork personal dashboard (productized "give-it-to-anyone")
 slug: my-dashboard
 effort: E4
-phase: verify
-progress: 71/80
+phase: build
+progress: 74/86
 mode: ALGORITHM
 started: 2026-06-24
-updated: 2026-06-30
+updated: 2026-07-01
 ---
 
 # My Dashboard — Project ISA (system of record)
@@ -168,6 +168,15 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 - [x] ISC-74: TTS panel exposes a Language selector (English / עברית) + per-language voice picker; Hebrew shows "Avri (male)" / "Hila (female)". ✅ VERIFIED LIVE (full UI loop, Interceptor authed Chrome): select עברית → voices swap to Avri/Hila → type Hebrew → Speak → 200 + `<audio>` rendered in panel.
 - [x] ISC-75: Anti: Hebrew never routes to OpenAI and needs no key — `synthesize()` routes any Hebrew Edge voice to `synthesizeHebrew` BEFORE the dormant OpenAI branch. ✅ VERIFIED: engine = `microsoft-edge:*` with NO key set; English stays on Aura-1 (unchanged).
 
+### P3 — Board pivot + Slice 3 split (2026-07-01; Nova pivot, re-synced by Ringo)
+> The Projects/Goals pages were RETIRED and replaced by a personal **Kanban Board** (drag-and-drop; To Do / In Progress / Done) — commits `c2a753e` + `91cbfaa` (Forge cross-vendor audit fixes folded). This re-syncs the SoR to the shipped code (the ISA above still described projects/goals). The board is now the primary entity the Assistant reads + writes. Board-specific verification is owned by Nova's commits; recorded here so the record matches the tree. Also splits P3 **Slice 3** into **3a (guarded card writers — DONE)** and **3b (Assistant drives the tools — OPEN, the one remaining agent-layer gap)**.
+- [x] ISC-76: Board data model — `cards` table (`0005_board.sql`: id/title/notes/status∈{todo,in_progress,done}/position/timestamps + status index + generic demo seed; DROPs `projects`/`goals`) with `store.ts` CRUD (`listCards`/`addCard`/`editCard`/`moveCard`/`deleteCard`). Landed `c2a753e`.
+- [x] ISC-77: Board UI — `/board` drag-and-drop Kanban (SquareKanban) replaces the retired Projects+Goals pages in the manifest; current v1 page set = Home · **Board** · Portfolio · Tools · KB · Assistant. `kb_docs` starter copy refreshed so nothing references projects/goals. Landed `c2a753e`.
+- [x] ISC-78: **Slice 3a (board-adapted) — guarded card write tools.** `mcp.ts` registers `add_card`/`move_card`/`edit_card`/`delete_card` mirroring the KB writers exactly: `confirm:true` gate + atomic D1 batch (data change + exactly one `mcp_activity` audit row) via `store.ts`. Forge cross-vendor audit fixes folded (`91cbfaa`). = the productized replacement for the planned project/goal writers.
+- [ ] ISC-79: **Slice 3b — the Assistant DRIVES the tools.** `runAssistant` gets a tool-calling loop over the in-process service functions (read tools free; write tools confirm-gated). A `confirmation_required` result renders as a **Confirm / Cancel card** in the Assistant pane; Confirm re-issues with `confirm:true`, Cancel writes nothing. Result: the owner types "add a card / move it to Done" and it happens — the behavior the board's own demo seed already advertises (`demo-card-3`: "Try the Assistant — ask it to add a card or move one to Done") but the pane can't yet perform.
+- [ ] ISC-80: **Slice 3b engine — GLM.** The Assistant runs on Cloudflare Workers AI GLM: `@cf/zai-org/glm-4.7-flash` (fast floor + the function-calling loop) with `@cf/zai-org/glm-5.2` (strong-reasoning tier); both env-configurable (`ASSISTANT_MODEL_FAST` / `ASSISTANT_MODEL_REASONING`); Claude-via-AI-Gateway stays the opt-in top tier. Replaces `@cf/meta/llama-3.1-8b-instruct-fp8` — chosen because Llama-3.1-8B is a weak function-caller (the exact reason `ASSISTANT_WRITES_PLAN` §3b deferred the tool-loop); GLM-flash has native tool-calling, making 3b viable without paying for Anthropic. Gated on a Phase-0 live probe of GLM tool-calling shape on `env.AI` (verify, don't assume — prior Workers-AI JSON-schema quirks, error 5024).
+- [ ] ISC-81: Anti (Slice 3b) — no write executes without the confirm step; prompt-injection in the chat cannot trigger an *unconfirmed* write; bad tool args fail Zod, not the DB; the audit row still commits atomically with every confirmed write. Cross-vendor (Forge/Cato) review before widening.
+
 ## Test Strategy
 
 | isc | type | check | threshold | tool |
@@ -202,6 +211,8 @@ Ship a fresh Cloudflare-Workers dashboard that any hand-picked recipient can sta
 | F0.10 Deploy-button 2nd-fork proof | ISC-1,29,30 | F0.9 + GitHub remote + OAuth | DEFERRED (Yaron) |
 
 ## Decisions
+
+- 2026-07-01 (Board pivot recorded + GLM chosen as the Slice-3b Assistant engine — SoR re-sync, agent=Ringo): Two things. **(1) Board pivot recorded** — Nova retired projects/goals → a personal Kanban Board (`0005_board.sql` cards table; `/board` drag-and-drop; `add/move/edit/delete_card` MCP write tools; commits `c2a753e` + `91cbfaa`, Forge audit folded). The ISA had drifted (still described projects/goals) → re-synced via ISC-76..78 + the Slice-3 split. **(2) GLM chosen as the Slice-3b Assistant engine** (Yaron, this session, after a live Workers-AI catalog review): `@cf/zai-org/glm-4.7-flash` = fast floor + tool-calling loop; `@cf/zai-org/glm-5.2` = reasoning tier; Claude-via-AI-Gateway stays opt-in top tier. **Rationale:** the built-in Assistant is grounded Q&A only (`assistant.ts`, still Llama-3.1-8B) and can't call the tools — `ASSISTANT_WRITES_PLAN` §3b named the cause as weak `env.AI` tool-calling; GLM-flash's native function-calling is the missing enabler, so the model choice IS Slice-3b's unlock, not a detour. **Coordination:** Ringo owns ISA-sync + Slice-3b as one coupled thread (the GLM decision lives only in this session; the board facts are durable in commits); Nova stands down on this repo (tree verified clean at `91cbfaa`, no WIP/stash/worktree). Slice-3b app code NOT started — stopped here for Yaron's look. See `Plans/COORDINATION.md`.
 
 - 2026-06-30 (Custom domain LIVE — `my-dashboard.app`): Yaron registered `my-dashboard.app` via **CF Registrar** (zone `e9055d4a`, active, exp 2027-06-30; NS already Cloudflare → no migration). Wired all 3 forks to **branded subdomains** via Workers Custom Domains (PUT `/accounts/{a}/workers/domains` {zone_id, hostname, service}; auto DNS + edge cert, live in seconds): `noa.my-dashboard.app`→my-dashboard-noa, `ringo.my-dashboard.app`→my-dashboard-ringo, `staging.my-dashboard.app`→my-dashboard. Created a **per-hostname CF Access app** each (noa AUD `bd0ece83` allow Noa+Yaron; ringo `58a91ea8` allow Yaron; staging `3a435fe5`) and swapped each worker's `ACCESS_AUD` secret to its hostname's app (team `small-fire-f8d3` unchanged). Then **disabled workers.dev** (`enabled:false`) on all 3 → the branded domain is the SOLE door (workers.dev now 404). Apex `my-dashboard.app` left for a future landing page. **Reusable same-account fork → branded subdomain:** bind custom domain + new per-host Access app + swap `ACCESS_AUD` + disable workers.dev (single-AUD code means one hostname per worker; verify authed on the custom domain BEFORE disabling workers.dev to avoid a lockout window).
 
