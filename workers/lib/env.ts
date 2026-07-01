@@ -39,9 +39,13 @@ export interface AppEnv {
   /** Scoped per-fork bearer token for the MCP control plane (P3). */
   MCP_BEARER?: string;
 
-  // ---- Assistant (P3 Slice 2, ISC-44) ----
-  /** Workers AI text model id for the assistant (default: a Llama instruct model). */
+  // ---- Assistant (P3 Slice 2/3b, ISC-44/80) ----
+  /** Back-compat alias for the fast model (older forks). Superseded by ASSISTANT_MODEL_FAST. */
   ASSISTANT_MODEL?: string;
+  /** Workers AI fast floor + tool-calling model (default: @cf/zai-org/glm-4.7-flash). */
+  ASSISTANT_MODEL_FAST?: string;
+  /** Workers AI strong-reasoning model (default: @cf/zai-org/glm-5.2). */
+  ASSISTANT_MODEL_REASONING?: string;
   /** Opt-in: Anthropic API key — used ONLY server-side via AI Gateway, never sent to the browser. */
   ANTHROPIC_API_KEY?: string;
   /** Opt-in: Cloudflare AI Gateway base URL

@@ -341,16 +341,42 @@ data.post("/assistant", async (c) => {
   if (viewer.mode !== "access" || !viewer.isOwner) {
     return c.json({ error: "Enable Cloudflare Access on this fork to use the assistant." }, 403);
   }
-  let body: { question?: unknown };
+  let body: { question?: unknown; messages?: unknown; mode?: unknown; confirm?: unknown };
   try {
     body = await c.req.json();
   } catch {
     body = {};
   }
+
+  // Conversation: prefer `messages` [{role,content}]; fall back to a single `question`.
+  const rawMsgs = Array.isArray(body.messages) ? body.messages : [];
+  const messages = rawMsgs
+    .map((m) => ({
+      role: ((m as { role?: unknown }).role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+      content: String((m as { content?: unknown }).content ?? "").slice(0, 4000),
+    }))
+    .filter((m) => m.content.trim().length > 0);
   const question = String(body.question ?? "").slice(0, 4000).trim();
-  if (!question) return c.json({ error: "Ask a question." }, 400);
+  if (question && !messages.some((m) => m.role === "user" && m.content === question)) {
+    messages.push({ role: "user", content: question });
+  }
+
+  const mode = (body.mode === "reasoning" ? "reasoning" : "fast") as "fast" | "reasoning";
+
+  // Confirmed write proposal from the UI's Confirm button: {tool, args}. runAssistant
+  // re-checks that `tool` is a known WRITE tool before executing.
+  let confirm: { tool: string; args: Record<string, unknown> } | null = null;
+  const rawConfirm = body.confirm as { tool?: unknown; args?: unknown } | undefined;
+  if (rawConfirm && typeof rawConfirm.tool === "string") {
+    const args =
+      rawConfirm.args && typeof rawConfirm.args === "object" ? (rawConfirm.args as Record<string, unknown>) : {};
+    confirm = { tool: rawConfirm.tool, args };
+  }
+
+  if (!confirm && messages.length === 0) return c.json({ error: "Ask a question." }, 400);
+
   try {
-    return c.json(await runAssistant(c.env, question));
+    return c.json(await runAssistant(c.env, { messages, mode, confirm }));
   } catch (e) {
     return c.json({ error: `assistant failed: ${(e as Error).message}` }, 502);
   }
