@@ -148,15 +148,36 @@ export interface Me {
 }
 
 export type CardStatus = "todo" | "in_progress" | "done";
+export type CardPriority = "none" | "low" | "medium" | "high";
+export interface CardLabel {
+  name: string;
+  color: string; // hex "#rrggbb"; server defaults invalid colors to #64748b
+}
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
 
 export interface Card {
   id: string;
   title: string;
-  notes: string | null;
+  notes: string | null; // the card "description"
   status: CardStatus;
   position: number;
   created_at: string;
   updated_at: string;
+  due_date: string | null; // YYYY-MM-DD or null
+  priority: CardPriority;
+  labels: CardLabel[];
+  checklist: ChecklistItem[];
+}
+
+/** The richer fields a card write may set (0006). All optional — omit to leave unchanged. */
+export interface CardFields {
+  due_date?: string | null;
+  priority?: CardPriority;
+  labels?: CardLabel[];
+  checklist?: ChecklistItem[];
 }
 
 export interface PortfolioSnapshot {
@@ -188,8 +209,9 @@ export const useCards = () =>
 export const useAddCard = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { title: string; notes?: string | null; status?: CardStatus }) =>
-      apiPost<Card>("/api/cards", input),
+    mutationFn: (
+      input: { title: string; notes?: string | null; status?: CardStatus } & CardFields,
+    ) => apiPost<Card>("/api/cards", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cards"] }),
   });
 };
@@ -197,8 +219,9 @@ export const useAddCard = () => {
 export const useEditCard = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...patch }: { id: string; title?: string; notes?: string | null }) =>
-      apiPut<Card>(`/api/cards/${id}`, patch),
+    mutationFn: (
+      { id, ...patch }: { id: string; title?: string; notes?: string | null } & CardFields,
+    ) => apiPut<Card>(`/api/cards/${id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["cards"] }),
   });
 };
