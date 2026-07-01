@@ -133,10 +133,14 @@ export function migrateConfig(raw: unknown): Config {
 
   // Stepwise migrations land here as the schema grows.
   const version = typeof obj.schemaVersion === "number" ? obj.schemaVersion : 0;
-  if (version < 2) {
-    // v2: projects/goals retired in favor of a single Board page. Rewrite the
-    // stored page-key arrays so an EXISTING fork surfaces the Board where its
-    // projects/goals sat (runs on every read → the board shows without a resave).
+  const hasLegacy = (a: unknown) =>
+    Array.isArray(a) && a.some((k) => k === "projects" || k === "goals");
+  // v2: projects/goals retired in favor of a single Board page. Rewrite the stored
+  // page-key arrays so an EXISTING fork surfaces the Board where its projects/goals
+  // sat (runs on every read → the board shows without a resave). Also fire whenever
+  // legacy keys are present even on a mis-stamped v2 blob, so the Board can never be
+  // silently dropped (Forge audit #3).
+  if (version < 2 || hasLegacy(obj.enabled_pages) || hasLegacy(obj.page_order)) {
     obj.enabled_pages = swapBoardKeys(obj.enabled_pages, [...DEFAULT_ENABLED]);
     obj.page_order = swapBoardKeys(obj.page_order, [...PAGE_KEYS]);
   }

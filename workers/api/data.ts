@@ -130,7 +130,9 @@ data.put("/cards/:id", async (c) => {
     );
     return c.json(card);
   } catch (e) {
-    return c.json({ error: (e as Error).message }, 400);
+    // Missing card → 404 (consistent with DELETE); everything else is bad input → 400. (Forge audit #8.)
+    const msg = (e as Error).message;
+    return c.json({ error: msg }, msg.startsWith("no card with id") ? 404 : 400);
   }
 });
 

@@ -63,6 +63,28 @@ function between(prev: number | null, next: number | null): number {
   return (prev + next) / 2;
 }
 
+/**
+ * Nearest KNOWN neighbour position scanning outward from `index` in `dir`, skipping
+ * the active card. A neighbour momentarily absent from the cache can't collapse the
+ * gap to null (which would push the dropped card outside its visual slot) — keep
+ * scanning until a card with a real position is found. (Forge audit #1.)
+ */
+function neighbourPos(
+  order: string[],
+  index: number,
+  dir: 1 | -1,
+  cardsById: Map<string, CardT>,
+  activeId: string,
+): number | null {
+  for (let i = index + dir; i >= 0 && i < order.length; i += dir) {
+    const id = order[i];
+    if (id === activeId) continue;
+    const pos = cardsById.get(id)?.position;
+    if (typeof pos === "number") return pos;
+  }
+  return null;
+}
+
 export default function Board() {
   useRequireEnabled("board");
   const cards = useCards();
@@ -92,8 +114,12 @@ export default function Board() {
   );
 
   function findContainer(id: UniqueIdentifier): CardStatus | null {
+    // Card membership first (Forge audit #5) — a card whose id equals a column key
+    // can't be misrouted to the column.
+    const inColumn = COLUMN_IDS.find((col) => items[col].includes(id as string));
+    if (inColumn) return inColumn;
     if (COLUMN_IDS.includes(id as CardStatus)) return id as CardStatus;
-    return (COLUMN_IDS.find((col) => items[col].includes(id as string)) as CardStatus) ?? null;
+    return null;
   }
 
   function onDragStart(e: DragStartEvent) {
@@ -147,11 +173,9 @@ export default function Board() {
     const finalIndex = column.indexOf(active.id as string);
     if (to === start.status && finalIndex === start.index) return; // no-op drop
 
-    const prevId = finalIndex > 0 ? column[finalIndex - 1] : null;
-    const nextId = finalIndex < column.length - 1 ? column[finalIndex + 1] : null;
     const position = between(
-      prevId ? (cardsById.get(prevId)?.position ?? null) : null,
-      nextId ? (cardsById.get(nextId)?.position ?? null) : null,
+      neighbourPos(column, finalIndex, -1, cardsById, active.id as string),
+      neighbourPos(column, finalIndex, 1, cardsById, active.id as string),
     );
     moveCard.mutate({ id: active.id as string, status: to, position });
   }
