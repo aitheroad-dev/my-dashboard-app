@@ -1,5 +1,13 @@
 import type { AppEnv } from "../lib/env";
 import {
+  ACTIVE_FIELD_TYPES,
+  CURRENT_SPEC_VERSION,
+  type ActiveFieldType,
+  type FieldSpec,
+  type Plan,
+} from "../lib/spec/schema";
+import { buildTemplatePlan, slugifyKey, type TemplateKey } from "./spec-catalog";
+import {
   listCards,
   getPortfolio,
   readSettings,
@@ -22,14 +30,15 @@ import {
  * `store.ts` service functions the MCP control plane and the HTTP routes use (ISC-45).
  *
  * `kind` is the security boundary:
- *  - "read"  → executed immediately inside the loop.
- *  - "write" → NEVER executed by the model. The loop only PROPOSES a write; it runs
- *              only after the authenticated owner confirms it in the UI (see
- *              runAssistant's `confirm` path). Writes carry actor "assistant" and the
- *              store commits the data change + exactly one mcp_activity audit row.
+ *  - "read"    → executed immediately inside the loop.
+ *  - "write"   → NEVER executed by the model. The loop only PROPOSES a write; it runs
+ *                only after the authenticated owner confirms it in the UI (see
+ *                runAssistant's `confirm` path). Writes carry actor "assistant" and the
+ *                store commits the data change + exactly one mcp_activity audit row.
+ *  - "declare" → builds a persisted spec Plan for owner approval; it has no direct run.
  */
 
-export type ToolKind = "read" | "write";
+export type ToolKind = "read" | "write" | "declare";
 
 export interface AgentTool {
   name: string;
@@ -37,7 +46,8 @@ export interface AgentTool {
   description: string;
   /** JSON Schema for the function arguments (OpenAI tools format). */
   parameters: Record<string, unknown>;
-  run: (env: AppEnv, args: Record<string, unknown>, actor?: string) => Promise<unknown>;
+  run?: (env: AppEnv, args: Record<string, unknown>, actor?: string) => Promise<unknown>;
+  buildPlan?: (args: Record<string, unknown>) => Plan;
   /** Human-readable one-liner for the Confirm card + audit-facing text. */
   summarize: (args: Record<string, unknown>) => string;
 }
@@ -45,6 +55,34 @@ export interface AgentTool {
 const CARD_STATUS = { type: "string", enum: ["todo", "in_progress", "done"] };
 const CARD_PRIORITY = { type: "string", enum: ["none", "low", "medium", "high"] };
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const strArray = (v: unknown): string[] => (Array.isArray(v) ? v.filter((item) => typeof item === "string") : []);
+
+type FieldInput = {
+  key?: unknown;
+  label?: unknown;
+  type?: unknown;
+  required?: unknown;
+  unique?: unknown;
+  options?: unknown;
+};
+
+function inputField(raw: unknown): FieldInput {
+  return raw && typeof raw === "object" ? (raw as FieldInput) : {};
+}
+
+function toFieldSpec(raw: unknown): FieldSpec {
+  const field = inputField(raw);
+  const type = str(field.type) as ActiveFieldType;
+  return {
+    specVersion: CURRENT_SPEC_VERSION,
+    key: str(field.key),
+    label: str(field.label) || str(field.key),
+    type,
+    required: Boolean(field.required),
+    unique: Boolean(field.unique),
+    ...(type === "single_select" ? { config: { options: strArray(field.options) } } : {}),
+  };
+}
 
 // ---- Richer-card enrichment (ISC-83.13..): due_date / priority / labels / checklist.
 // The model proposes model-friendly shapes; store.ts re-validates + bounds everything.
@@ -241,6 +279,129 @@ export const AGENT_TOOLS: AgentTool[] = [
     parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     run: (env, a, actor) => deleteCard(env, { id: str(a.id) }, actor || "assistant"),
     summarize: (a) => `Delete card ${str(a.id)}`,
+  },
+
+  // ---------- DECLARES (persisted spec plans; run only after owner applies plan) ----------
+  {
+    name: "apply_template",
+    kind: "declare",
+    description: "Prepare a built-in page/data-structure template for owner approval. This proposes a spec plan; it does not apply it.",
+    parameters: {
+      type: "object",
+      properties: {
+        template: { type: "string", enum: ["clients_crm", "sessions_log", "meetings_tracker"] },
+        page_title: { type: "string" },
+      },
+      required: ["template"],
+    },
+    buildPlan: (a) => buildTemplatePlan(str(a.template) as TemplateKey, { page_title: str(a.page_title) || undefined }),
+    summarize: (a) => `Create the ${str(a.template)} page`,
+  },
+  {
+    name: "propose_page",
+    kind: "declare",
+    description: "Prepare a custom list page and its data type for owner approval. This proposes a spec plan; it does not apply it.",
+    parameters: {
+      type: "object",
+      properties: {
+        entity_key: { type: "string" },
+        singular: { type: "string" },
+        plural: { type: "string" },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              label: { type: "string" },
+              type: { type: "string", enum: ACTIVE_FIELD_TYPES },
+              required: { type: "boolean" },
+              unique: { type: "boolean" },
+              options: { type: "array", items: { type: "string" } },
+            },
+            required: ["key", "label", "type"],
+          },
+        },
+        view_name: { type: "string" },
+        page_title: { type: "string" },
+      },
+      required: ["entity_key", "singular", "plural", "fields"],
+    },
+    buildPlan: (a) => {
+      const entityKey = str(a.entity_key);
+      const plural = str(a.plural);
+      const pageTitle = str(a.page_title) || plural;
+      const fields = Array.isArray(a.fields) ? a.fields.map(toFieldSpec) : [];
+      const viewKey = `${entityKey}_list`;
+      return {
+        specVersion: CURRENT_SPEC_VERSION,
+        actions: [
+          {
+            type: "add_entity",
+            additive: true,
+            entity: {
+              specVersion: CURRENT_SPEC_VERSION,
+              key: entityKey,
+              singular: str(a.singular),
+              plural,
+              fields,
+            },
+          },
+          {
+            type: "add_view",
+            additive: true,
+            entity_key: entityKey,
+            view: {
+              specVersion: CURRENT_SPEC_VERSION,
+              key: viewKey,
+              kind: "list",
+              name: str(a.view_name) || `All ${plural}`,
+              config: { visible_fields: fields.map((field) => field.key).slice(0, 8) },
+            },
+          },
+          {
+            type: "add_page",
+            additive: true,
+            page: {
+              specVersion: CURRENT_SPEC_VERSION,
+              key: slugifyKey(pageTitle, entityKey),
+              title: pageTitle,
+              views: [{ entity_key: entityKey, view_key: viewKey }],
+            },
+          },
+        ],
+      };
+    },
+    summarize: (a) => `Create a ${str(a.plural)} page`,
+  },
+  {
+    name: "add_field",
+    kind: "declare",
+    description: "Prepare a field addition for an existing data type. This proposes a spec plan; it does not apply it.",
+    parameters: {
+      type: "object",
+      properties: {
+        entity_key: { type: "string" },
+        field: {
+          type: "object",
+          properties: {
+            key: { type: "string" },
+            label: { type: "string" },
+            type: { type: "string", enum: ACTIVE_FIELD_TYPES },
+            required: { type: "boolean" },
+            unique: { type: "boolean" },
+            options: { type: "array", items: { type: "string" } },
+          },
+          required: ["key", "label", "type"],
+        },
+      },
+      required: ["entity_key", "field"],
+    },
+    buildPlan: (a) => ({
+      specVersion: CURRENT_SPEC_VERSION,
+      actions: [{ type: "add_field", additive: true, entity_key: str(a.entity_key), field: toFieldSpec(a.field) }],
+    }),
+    summarize: (a) => `Add field ${toFieldSpec(a.field).key} to ${str(a.entity_key)}`,
   },
 ];
 

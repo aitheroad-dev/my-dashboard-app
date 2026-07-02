@@ -3,7 +3,15 @@ import type { AppEnv } from "../lib/env";
 import type { FilterOp, FilterSpec, SortSpec } from "../lib/spec/schema";
 import { requireViewer } from "../lib/viewer";
 import { applyPlan, proposePlan, rejectPlan } from "../services/spec-plan";
-import { addRecord, deleteRecord, editRecord, listEntities, listRecords } from "../services/spec-store";
+import {
+  addRecord,
+  deleteRecord,
+  editRecord,
+  getPageDetail,
+  listEntities,
+  listPageSummaries,
+  listRecords,
+} from "../services/spec-store";
 import { clampLimit } from "../services/store";
 
 export const spec = new Hono<{ Bindings: AppEnv }>();
@@ -96,6 +104,28 @@ spec.get("/entities", async (c) => {
     const gate = await ownerOrResponse(c);
     if (gate instanceof Response) return gate;
     return c.json(await listEntities(c.env));
+  } catch (e) {
+    return errorResponse(c, e);
+  }
+});
+
+spec.get("/pages", async (c) => {
+  try {
+    const gate = await ownerOrResponse(c);
+    if (gate instanceof Response) return gate;
+    return c.json(await listPageSummaries(c.env));
+  } catch (e) {
+    return errorResponse(c, e);
+  }
+});
+
+spec.get("/pages/:key", async (c) => {
+  try {
+    const gate = await ownerOrResponse(c);
+    if (gate instanceof Response) return gate;
+    const detail = await getPageDetail(c.env, c.req.param("key"));
+    if (!detail) return c.json({ error: "not found" }, 404);
+    return c.json(detail);
   } catch (e) {
     return errorResponse(c, e);
   }

@@ -47,10 +47,46 @@ export type RecordRow = {
 };
 
 export type RecordListQuery = { sort?: SortSpec; filter?: FilterSpec; limit?: number };
+export type PageSummary = { key: string; title: string; icon: string | null; entity_key: string };
+export type PageDetail = {
+  page: { key: string; title: string; icon: string | null };
+  entity: {
+    key: string;
+    singular: string;
+    plural: string;
+    fields: Array<{ key: string; label: string; type: string; required: boolean; unique: boolean; options?: string[] }>;
+  };
+  view: { kind: string; name: string; visible_fields: string[]; sort?: SortSpec };
+  records: Array<{ id: string; data: Record<string, unknown>; created_at: string; updated_at: string }>;
+};
 
 type StoredFieldConfig = {
   options?: string[];
   unique?: boolean;
+};
+
+type PageRow = {
+  key: string;
+  title: string;
+  icon: string | null;
+  body: string;
+};
+
+type ViewRow = {
+  kind: string;
+  name: string;
+  config: string;
+};
+
+type PageViewRef = {
+  entity_key: string;
+  view_key: string;
+};
+
+type StoredViewConfig = {
+  visible_fields: string[];
+  sort?: SortSpec;
+  filter?: FilterSpec;
 };
 
 type ProjectedValue = {
@@ -85,6 +121,41 @@ function parseFieldConfig(field: FieldRow): StoredFieldConfig {
     };
   } catch {
     return {};
+  }
+}
+
+function parsePageRefs(body: string): PageViewRef[] {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((ref) => {
+        if (!ref || typeof ref !== "object") return null;
+        const candidate = ref as { entity_key?: unknown; view_key?: unknown };
+        return typeof candidate.entity_key === "string" && typeof candidate.view_key === "string"
+          ? { entity_key: candidate.entity_key, view_key: candidate.view_key }
+          : null;
+      })
+      .filter((ref): ref is PageViewRef => ref !== null);
+  } catch {
+    return [];
+  }
+}
+
+function parseViewConfig(config: string): StoredViewConfig {
+  try {
+    const parsed = JSON.parse(config) as unknown;
+    if (!parsed || typeof parsed !== "object") return { visible_fields: [] };
+    const raw = parsed as { visible_fields?: unknown; sort?: unknown; filter?: unknown };
+    return {
+      visible_fields: Array.isArray(raw.visible_fields)
+        ? raw.visible_fields.filter((field) => typeof field === "string")
+        : [],
+      sort: raw.sort && typeof raw.sort === "object" ? (raw.sort as SortSpec) : undefined,
+      filter: raw.filter && typeof raw.filter === "object" ? (raw.filter as FilterSpec) : undefined,
+    };
+  } catch {
+    return { visible_fields: [] };
   }
 }
 
@@ -249,6 +320,62 @@ export async function getEntityByKey(
   const fields = await sql<FieldRow>`SELECT id, entity_id, key, label, type, config, required, position, created_at
     FROM sd_fields WHERE entity_id = ${entity.id} ORDER BY position, created_at`;
   return { entity, fields };
+}
+
+export async function listPageSummaries(env: AppEnv): Promise<PageSummary[]> {
+  const sql = getDb(env);
+  const rows = await sql<PageRow>`SELECT key, title, icon, body FROM sd_pages ORDER BY position, created_at`;
+  return rows.map((row) => {
+    const first = parsePageRefs(row.body)[0];
+    return { key: row.key, title: row.title, icon: row.icon, entity_key: first?.entity_key ?? "" };
+  });
+}
+
+export async function getPageDetail(env: AppEnv, key: string): Promise<PageDetail | null> {
+  const sql = getDb(env);
+  const pages = await sql<PageRow>`SELECT key, title, icon, body FROM sd_pages WHERE key = ${key} LIMIT 1`;
+  const page = pages[0];
+  if (!page) return null;
+
+  const first = parsePageRefs(page.body)[0];
+  if (!first) return null;
+
+  const resolved = await getEntityByKey(env, first.entity_key);
+  if (!resolved) return null;
+
+  const views = await sql<ViewRow>`SELECT kind, name, config FROM sd_views
+    WHERE entity_id = ${resolved.entity.id} AND key = ${first.view_key} LIMIT 1`;
+  const view = views[0];
+  if (!view) return null;
+
+  const config = parseViewConfig(view.config);
+  const records = await listRecords(env, first.entity_key, { sort: config.sort, filter: config.filter });
+  return {
+    page: { key: page.key, title: page.title, icon: page.icon },
+    entity: {
+      key: resolved.entity.key,
+      singular: resolved.entity.singular,
+      plural: resolved.entity.plural,
+      fields: resolved.fields.map((field) => {
+        const fieldConfig = parseFieldConfig(field);
+        return {
+          key: field.key,
+          label: field.label,
+          type: field.type,
+          required: field.required === 1,
+          unique: fieldConfig.unique === true,
+          ...(fieldConfig.options ? { options: fieldConfig.options } : {}),
+        };
+      }),
+    },
+    view: { kind: view.kind, name: view.name, visible_fields: config.visible_fields, ...(config.sort ? { sort: config.sort } : {}) },
+    records: records.map((record) => ({
+      id: record.id,
+      data: record.data,
+      created_at: record.created_at,
+      updated_at: record.updated_at,
+    })),
+  };
 }
 
 export function fieldInsertStatement(
