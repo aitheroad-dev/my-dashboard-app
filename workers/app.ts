@@ -5,6 +5,7 @@ import { runMigrations } from "./lib/migrate";
 import { getViewer } from "./lib/viewer";
 import { verifyBearer } from "./lib/auth";
 import { data } from "./api/data";
+import { spec } from "./api/spec";
 import { mcpReadHandler } from "./mcp";
 
 const app = new Hono<{ Bindings: AppEnv }>();
@@ -52,6 +53,7 @@ app.get("/api/me", async (c) => {
 // P1 data routes (projects/goals/portfolio/settings). The /api/* migration
 // boot-guard above already ran for these paths; mounted before the SSR catch-all.
 app.route("/api", data);
+app.route("/api/sd", spec);
 
 // MCP read-only control plane (ISC-42). Outside /api, so it has no Access JWT and
 // the /api/* boot-guard doesn't cover it — gate on the scoped per-fork bearer and
