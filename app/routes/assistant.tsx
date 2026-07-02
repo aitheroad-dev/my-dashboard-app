@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Sparkles, Send, Check, X, Zap, Brain } from "lucide-react";
+import { Sparkles, Send, Check, X, Zap, Brain, Mic, Square, Loader2 } from "lucide-react";
 import type { Route } from "./+types/assistant";
-import { useRequireEnabled, apiPost } from "../lib/api";
+import { useRequireEnabled, apiPost, callTool, type WhisperResult } from "../lib/api";
+import { useRecorder } from "../lib/useRecorder";
+import { cn } from "../lib/utils";
 import type { PendingPlan } from "../lib/spec-api";
 import { SpecPreview } from "../components/SpecPreview";
 import { PageHeader, Card, Button } from "../components/ui";
@@ -28,6 +30,7 @@ export default function Assistant() {
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("fast");
   const [pending, setPending] = useState<Pending | null>(null);
@@ -37,9 +40,10 @@ export default function Assistant() {
   const historyFrom = (ts: Turn[]) =>
     ts.map((t) => ({ role: t.role === "you" ? ("user" as const) : ("assistant" as const), content: t.text }));
 
-  async function ask(e: React.FormEvent) {
-    e.preventDefault();
-    const q = question.trim();
+  // Core send — shared by the text form and the voice (push-to-talk) path, so the
+  // transcript can be dispatched directly without waiting on `question` state.
+  async function send(text: string) {
+    const q = text.trim();
     if (!q || busy) return;
     setError(null);
     setPending(null);
@@ -59,6 +63,30 @@ export default function Assistant() {
       setBusy(false);
     }
   }
+
+  function ask(e: React.FormEvent) {
+    e.preventDefault();
+    void send(question);
+  }
+
+  // Push-to-talk: tap the mic to record, tap again to stop. On stop the clip is
+  // transcribed on this fork's own `whisper` tool and the text is sent to the
+  // assistant automatically — no keyboard needed (works great on a phone).
+  const recorder = useRecorder(async (b64) => {
+    if (!b64) return; // the recorder already surfaced any mic/encode error
+    setError(null);
+    setTranscribing(true);
+    try {
+      const res = await callTool<WhisperResult>("whisper", { audio_base64: b64 });
+      const text = (res.text || "").trim();
+      if (text) await send(text);
+      else setError("I didn't catch any speech — tap the mic and try again.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTranscribing(false);
+    }
+  });
 
   async function confirmWrite() {
     if (!pending || busy) return;
@@ -83,7 +111,7 @@ export default function Assistant() {
 
   return (
     <div>
-      <PageHeader title="Assistant" subtitle="Ask about your dashboard — or ask it to add and move board cards for you." />
+      <PageHeader title="Assistant" subtitle="Ask about your dashboard — or tap the mic and just talk." />
 
       <div className="mb-3 flex items-center gap-1 text-xs">
         <span className="mr-1 text-slate-500">Mode:</span>
@@ -168,15 +196,51 @@ export default function Assistant() {
         <input
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask your dashboard…"
+          placeholder="Ask your dashboard… or tap the mic"
           className="flex-1 rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:border-slate-500 focus:outline-none"
           aria-label="Ask the assistant"
         />
-        <Button type="submit" disabled={busy || !question.trim()}>
+        <button
+          type="button"
+          onClick={recorder.recording ? recorder.stop : recorder.start}
+          disabled={busy || transcribing}
+          aria-label={recorder.recording ? "Stop recording and send" : "Record a voice message"}
+          title={recorder.recording ? "Stop & send" : "Speak"}
+          className={cn(
+            "inline-flex items-center justify-center rounded-lg px-3.5 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+            recorder.recording
+              ? "bg-red-600 text-white hover:bg-red-500"
+              : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+          )}
+        >
+          {transcribing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : recorder.recording ? (
+            <Square className="h-4 w-4" />
+          ) : (
+            <Mic className="h-4 w-4" />
+          )}
+        </button>
+        <Button type="submit" disabled={busy || transcribing || !question.trim()}>
           <Send className="h-4 w-4" />
           Ask
         </Button>
       </form>
+
+      {(recorder.recording || transcribing || recorder.error) && (
+        <div className="mt-2 flex items-center gap-2 text-xs">
+          {recorder.recording && (
+            <span className="flex items-center gap-1.5 text-red-600">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" />
+              Listening… tap the square to stop &amp; send (auto-stops at 2 min).
+            </span>
+          )}
+          {transcribing && <span className="text-slate-500">Transcribing…</span>}
+          {!recorder.recording && !transcribing && recorder.error && (
+            <span className="text-red-600">{recorder.error}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
