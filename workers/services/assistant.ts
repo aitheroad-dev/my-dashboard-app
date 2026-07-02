@@ -30,6 +30,18 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
 const MAX_STEPS = 4; // bounded read→loop rounds before we give up
 const MAX_HISTORY = 12; // trailing conversation turns kept
 const MAX_MSG_CHARS = 4000;
+const MAX_AI_MS = 22000; // hard ceiling on ONE model call — env.AI.run has no built-in timeout,
+// so a slow/hung GLM (or a MAX_STEPS loop of slow calls) would otherwise hang /api/assistant
+// forever and the UI's "Thinking…" never clears. On timeout we throw → Anthropic fallback → error.
+
+/** Race a model call against a deadline. The underlying request may still finish in the
+ * background; we stop awaiting so the handler returns an error instead of hanging. */
+function withAiTimeout<T>(p: Promise<T>, ms = MAX_AI_MS): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("model timed out")), ms)),
+  ]);
+}
 
 export type AssistantMode = "fast" | "reasoning";
 export type AssistantSource = "workers-ai" | "anthropic";
@@ -281,7 +293,7 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
   for (let step = 0; step < MAX_STEPS; step++) {
     let out: GlmResult;
     try {
-      out = await aiRun(model, { messages: msgs, tools: openAiToolSpec(), max_tokens: 1024 });
+      out = await withAiTimeout(aiRun(model, { messages: msgs, tools: openAiToolSpec(), max_tokens: 1024 }));
     } catch (e) {
       const fb = await tryAnthropic(env, system, lastUser);
       if (fb) return fb;
