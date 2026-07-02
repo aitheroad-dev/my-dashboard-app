@@ -14,6 +14,7 @@ export default [
     route("kb", "routes/kb.tsx"),
     route("kb-doc/:slug", "routes/kb-doc.tsx"),
     route("assistant", "routes/assistant.tsx"),
+    route("p/:pageKey", "routes/spec-page.tsx"),
     route("settings", "routes/settings.tsx"),
   ]),
 ] satisfies RouteConfig;

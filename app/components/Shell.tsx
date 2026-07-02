@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router";
-import { LayoutDashboard, Settings as SettingsIcon } from "lucide-react";
+import { LayoutDashboard, Settings as SettingsIcon, Table } from "lucide-react";
 import { useMe, useSettings, type PageKey } from "../lib/api";
+import { useSpecPages } from "../lib/spec-api";
 import { navFromPages } from "../lib/pages";
 import { cn } from "../lib/utils";
 
@@ -16,6 +17,7 @@ const FALLBACK_PAGES: PageKey[] = ["home", "board", "portfolio", "tools", "kb"];
 export default function Shell() {
   const { data: settings } = useSettings();
   const { data: me } = useMe();
+  const { data: specPages } = useSpecPages();
   const pages = settings?.pages ?? FALLBACK_PAGES;
   const nav = navFromPages(pages);
   const title = settings?.display_name ?? "My Dashboard";
@@ -47,6 +49,27 @@ export default function Shell() {
             >
               <p.icon className="h-4 w-4 shrink-0" />
               {p.label}
+            </NavLink>
+          ))}
+          {(specPages ?? []).map((p) => (
+            <NavLink
+              key={p.key}
+              to={`/p/${p.key}`}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
+                )
+              }
+            >
+              {p.icon ? (
+                <span className="h-4 w-4 shrink-0 text-center leading-4">{p.icon}</span>
+              ) : (
+                <Table className="h-4 w-4 shrink-0" />
+              )}
+              {p.title}
             </NavLink>
           ))}
         </nav>
@@ -93,6 +116,27 @@ export default function Shell() {
             >
               <p.icon className="h-3.5 w-3.5" />
               {p.label}
+            </NavLink>
+          ))}
+          {(specPages ?? []).map((p) => (
+            <NavLink
+              key={p.key}
+              to={`/p/${p.key}`}
+              className={({ isActive }) =>
+                cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
+                  isActive
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600",
+                )
+              }
+            >
+              {p.icon ? (
+                <span className="h-3.5 w-3.5 text-center leading-3">{p.icon}</span>
+              ) : (
+                <Table className="h-3.5 w-3.5" />
+              )}
+              {p.title}
             </NavLink>
           ))}
           {me?.isOwner && (

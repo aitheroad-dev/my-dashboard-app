@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Sparkles, Send, Check, X, Zap, Brain } from "lucide-react";
 import type { Route } from "./+types/assistant";
 import { useRequireEnabled, apiPost } from "../lib/api";
+import type { PendingPlan } from "../lib/spec-api";
+import { SpecPreview } from "../components/SpecPreview";
 import { PageHeader, Card, Button } from "../components/ui";
 
 export function meta(_: Route.MetaArgs) {
@@ -17,6 +19,7 @@ type AssistantRes = {
   source: string;
   mode?: string;
   pending?: Pending | null;
+  pendingPlan?: PendingPlan | null;
   committed?: { tool: string; summary: string } | null;
 };
 
@@ -28,6 +31,7 @@ export default function Assistant() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("fast");
   const [pending, setPending] = useState<Pending | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null);
 
   // The conversation the model sees — mapped from displayed turns.
   const historyFrom = (ts: Turn[]) =>
@@ -39,6 +43,7 @@ export default function Assistant() {
     if (!q || busy) return;
     setError(null);
     setPending(null);
+    setPendingPlan(null);
     setBusy(true);
     const nextTurns: Turn[] = [...turns, { role: "you", text: q }];
     setTurns(nextTurns);
@@ -47,6 +52,7 @@ export default function Assistant() {
       const res = await apiPost<AssistantRes>("/api/assistant", { messages: historyFrom(nextTurns), mode });
       setTurns((t) => [...t, { role: "assistant", text: res.answer, meta: `${res.source} · ${res.model}` }]);
       if (res.pending) setPending(res.pending);
+      if (res.pendingPlan) setPendingPlan(res.pendingPlan);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -145,6 +151,10 @@ export default function Assistant() {
               </button>
             </div>
           </div>
+        )}
+
+        {pendingPlan && (
+          <SpecPreview pendingPlan={pendingPlan} onResolved={() => setPendingPlan(null)} />
         )}
 
         {busy && <div className="text-sm text-slate-400">Thinking…</div>}
