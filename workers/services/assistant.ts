@@ -23,8 +23,13 @@ import { getEntityByKey } from "./spec-store";
  * The route that calls this is owner-gated (mode:access + isOwner).
  */
 
-const DEFAULT_FAST_MODEL = "@cf/zai-org/glm-4.7-flash";
-const DEFAULT_REASONING_MODEL = "@cf/zai-org/glm-5.2";
+// Engine: was GLM (`@cf/zai-org/glm-4.7-flash`/`glm-5.2`), but on 2026-07-02 BOTH zai-org GLM
+// models went dead on Workers AI (glm-4.7-flash hangs on a trivial no-tools prompt; glm-5.2 →
+// AiError Internal server error), while `@cf/meta/llama-3.1-8b-instruct-fp8` answers in ~1s AND
+// function-calls correctly. Defaulting to Llama (P3's original engine, stable + tool-capable).
+// Restore GLM via ASSISTANT_MODEL_FAST/ASSISTANT_MODEL_REASONING env when CF fixes it.
+const DEFAULT_FAST_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
+const DEFAULT_REASONING_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 const DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
 
 const MAX_STEPS = 4; // bounded read→loop rounds before we give up
