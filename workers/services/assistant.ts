@@ -84,10 +84,38 @@ type LoopMsg = {
   tool_calls?: RawToolCall[];
   tool_call_id?: string;
 };
+type NativeToolCall = { id?: string; name: string; arguments?: unknown };
 type GlmResult = {
   response?: string;
   choices?: Array<{ message?: { content?: string | null; tool_calls?: RawToolCall[] | null } }>;
+  tool_calls?: NativeToolCall[] | null; // Workers-AI-native shape (Llama): top-level {name, arguments:object}
 };
+
+type NormalizedCall = { id: string; name: string; args: Record<string, unknown> };
+
+/** Normalize a model result across BOTH tool-calling dialects: the OpenAI `choices` shape
+ * (GLM) and the Workers-AI-native top-level `{response, tool_calls:[{name,arguments}]}` shape
+ * (Llama). Without this, swapping the engine silently drops every tool call → "(no answer)". */
+function extractResult(out: GlmResult): { content: string; calls: NormalizedCall[] } {
+  const msg = out.choices?.[0]?.message;
+  if (msg) {
+    const calls = (msg.tool_calls ?? [])
+      .filter((tc) => tc?.function?.name)
+      .map((tc) => ({ id: tc.id, name: tc.function.name, args: safeParseArgs(tc.function.arguments) }));
+    return { content: (msg.content ?? "").toString(), calls };
+  }
+  const native = (out.tool_calls ?? [])
+    .filter((tc) => tc?.name)
+    .map((tc, i) => ({
+      id: tc.id ?? `call_${i}`,
+      name: tc.name,
+      args:
+        tc.arguments && typeof tc.arguments === "object"
+          ? (tc.arguments as Record<string, unknown>)
+          : safeParseArgs(String(tc.arguments ?? "{}")),
+    }));
+  return { content: (out.response ?? "").toString(), calls: native };
+}
 
 async function dashboardContext(env: AppEnv): Promise<string> {
   const [cards, kb] = await Promise.all([listCards(env, 100), listKbDocs(env, 50)]);
@@ -305,27 +333,19 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
       throw e;
     }
 
-    const message = out.choices?.[0]?.message;
-    // Text-only model path (e.g. a Llama fallback) — no `choices`, uses `response`.
-    if (!message) {
-      const text = (out.response ?? "").toString().trim();
-      return { answer: text || "(no answer)", model, source: "workers-ai", mode, pending: null };
-    }
-
-    const toolCalls = (message.tool_calls ?? []).filter((tc) => tc?.function?.name);
-    if (!toolCalls.length) {
-      return { answer: (message.content ?? "").toString().trim() || "(no answer)", model, source: "workers-ai", mode, pending: null };
+    const { content, calls } = extractResult(out);
+    if (!calls.length) {
+      return { answer: content.trim() || "(no answer)", model, source: "workers-ai", mode, pending: null };
     }
 
     // Any DECLARE requested → persist the first spec plan; execute nothing this turn.
-    const firstDeclare = toolCalls.find((tc) => TOOLS_BY_NAME[tc.function.name]?.kind === "declare");
+    const firstDeclare = calls.find((c) => TOOLS_BY_NAME[c.name]?.kind === "declare");
     if (firstDeclare) {
-      const tool = TOOLS_BY_NAME[firstDeclare.function.name]!;
-      const args = safeParseArgs(firstDeclare.function.arguments);
-      const preamble = (message.content ?? "").toString().trim();
+      const tool = TOOLS_BY_NAME[firstDeclare.name]!;
+      const preamble = content.trim();
       const actor = input.actor ? `assistant:${input.actor}` : "assistant";
       try {
-        const plan = tool.buildPlan!(args);
+        const plan = tool.buildPlan!(firstDeclare.args);
         const proposed = await proposePlan(env, plan, actor);
         const pendingPlan = await buildPendingPlan(env, proposed.plan_id, plan, proposed.impact);
         return {
@@ -349,13 +369,13 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
     }
 
     // Any WRITE requested → propose the first one; execute nothing this turn.
-    const firstWrite = toolCalls.find((tc) => TOOLS_BY_NAME[tc.function.name]?.kind === "write");
+    const firstWrite = calls.find((c) => TOOLS_BY_NAME[c.name]?.kind === "write");
     if (firstWrite) {
-      const tool = TOOLS_BY_NAME[firstWrite.function.name]!;
-      const args = safeParseArgs(firstWrite.function.arguments);
+      const tool = TOOLS_BY_NAME[firstWrite.name]!;
+      const args = firstWrite.args;
       const summary = tool.summarize(args);
       const detail = await describeWrite(env, tool.name, args);
-      const preamble = (message.content ?? "").toString().trim();
+      const preamble = content.trim();
       return {
         answer: preamble || `Ready when you are — confirm below.`,
         model,
@@ -365,19 +385,22 @@ export async function runAssistant(env: AppEnv, input: RunInput): Promise<Assist
       };
     }
 
-    // All READs → run them, feed results back, loop.
-    msgs.push({ role: "assistant", content: message.content ?? "", tool_calls: toolCalls });
-    for (const tc of toolCalls) {
-      const tool = TOOLS_BY_NAME[tc.function.name];
+    // All READs → run them, feed results back, loop. Rebuild OpenAI-shape tool_calls for the
+    // follow-up assistant message regardless of the model's native dialect.
+    msgs.push({
+      role: "assistant",
+      content,
+      tool_calls: calls.map((c) => ({ id: c.id, type: "function" as const, function: { name: c.name, arguments: JSON.stringify(c.args) } })),
+    });
+    for (const c of calls) {
+      const tool = TOOLS_BY_NAME[c.name];
       let result: unknown;
       try {
-        result = tool?.run
-          ? await tool.run(env, safeParseArgs(tc.function.arguments))
-          : { error: `unknown or non-executable tool ${tc.function.name}` };
+        result = tool?.run ? await tool.run(env, c.args) : { error: `unknown or non-executable tool ${c.name}` };
       } catch (e) {
         result = { error: (e as Error).message };
       }
-      msgs.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result).slice(0, 8000) });
+      msgs.push({ role: "tool", tool_call_id: c.id, content: JSON.stringify(result).slice(0, 8000) });
     }
   }
 
