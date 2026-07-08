@@ -167,10 +167,46 @@ function capitalize(value: string): string {
 
 export async function generateImage(
   env: AppEnv,
-  input: { prompt?: unknown; quality?: unknown; image?: unknown; strength?: unknown },
+  input: { prompt?: unknown; quality?: unknown; image?: unknown; strength?: unknown; images?: unknown },
 ): Promise<Record<string, unknown>> {
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
   if (!prompt) throw new ToolError(400, "A prompt is required.");
+
+  // Multi-reference (mix up to 4 images): Flux-2 klein via multipart FormData. Each
+  // image must be < 512×512 (the client resizes before upload); the prompt references
+  // them by index ("combine image 0 and image 1"). Faces are NOT preserved — this is
+  // an artistic blend, not identity-locked composition.
+  const images = Array.isArray(input.images)
+    ? input.images.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map(stripDataUrl).slice(0, 4)
+    : [];
+  if (images.length >= 2) {
+    for (const im of images) {
+      if (approxBytes(im) > MAX_MEDIA_BYTES) throw new ToolError(400, "A reference image is too large.");
+    }
+    const form = new FormData();
+    form.append("prompt", prompt);
+    form.append("width", "1024");
+    form.append("height", "1024");
+    images.forEach((im, i) => {
+      form.append(`input_image_${i}`, new Blob([decodeB64(im)], { type: "image/png" }), `input_image_${i}.png`);
+    });
+    const formReq = new Response(form);
+    const resp = (await runAI(env, "@cf/black-forest-labs/flux-2-klein-4b", {
+      multipart: { body: formReq.body, contentType: formReq.headers.get("content-type") },
+    })) as { image?: string };
+    if (!resp?.image) throw new ToolError(502, "No image was returned by the model.");
+
+    const id = crypto.randomUUID();
+    await env.KV.put(`${IMG_PREFIX}${id}`, decodeB64(resp.image), { metadata: { contentType: "image/jpeg" } });
+    await pushIndex(env, IMG_INDEX, { id, prompt, quality: "mix", ts: Date.now() }, { blobPrefix: IMG_PREFIX });
+    return {
+      image_url: `/api/tools/media/img/${id}`,
+      image_base64: resp.image,
+      content_type: "image/jpeg",
+      prompt,
+      quality: "mix",
+    };
+  }
 
   // Reference-image (img2img): if the caller supplies an input image, TRANSFORM it
   // with SD-1.5 img2img — the only native Workers-AI model that accepts an input

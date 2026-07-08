@@ -15,6 +15,8 @@ import {
   Sparkles,
   Trash2,
   ChevronRight,
+  Plus,
+  X,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Button, Card } from "./ui";
@@ -123,19 +125,58 @@ function errMsg(e: unknown): string {
 
 // ---- Image (flux) ----
 
+// Resize an image file to fit within `max`px (both dims) via canvas, return base64
+// (no data: prefix). Meets Flux-2's <512px reference limit + shrinks upload size.
+// Client-only (runs in an upload handler, never during SSR).
+function resizeToBase64(file: File, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = document.createElement("img");
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("canvas unavailable"));
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL("image/png");
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("could not load image"));
+    };
+    img.src = url;
+  });
+}
+
 function ImagePanel() {
   const qc = useQueryClient();
   const [prompt, setPrompt] = useState("");
   const [quality, setQuality] = useState<"high" | "fast">("high");
-  const [refImage, setRefImage] = useState<string | null>(null); // base64 (no data: prefix) of the uploaded reference
+  const [refImages, setRefImages] = useState<string[]>([]); // base64 (no prefix), resized <512, up to 4
   const [strength, setStrength] = useState(0.6);
   // Synchronous re-entrancy guard: `disabled`/`isPending` only update on the next
   // render, so two clicks fired before that re-render both pass — a ref blocks the
   // second one instantly (this is what caused the duplicate image on the first test).
   const submitting = useRef(false);
+  const count = refImages.length;
   const m = useMutation({
+    // 0 images → text-to-image (flux/lucid) · 1 image → SD img2img (strength) ·
+    // 2-4 images → Flux-2 multi-reference (mix).
     mutationFn: () =>
-      callTool<FluxResult>("flux", refImage ? { prompt, image: refImage, strength } : { prompt, quality }),
+      callTool<FluxResult>(
+        "flux",
+        count >= 2
+          ? { prompt, images: refImages }
+          : count === 1
+            ? { prompt, image: refImages[0], strength }
+            : { prompt, quality },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tools-gallery"] }),
     onSettled: () => {
       submitting.current = false;
@@ -146,81 +187,100 @@ function ImagePanel() {
     submitting.current = true;
     m.mutate();
   };
-  const onFile = (file: File | undefined) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const res = String(reader.result || "");
-      setRefImage(res.includes(",") ? res.slice(res.indexOf(",") + 1) : res);
-    };
-    reader.readAsDataURL(file);
+  const addFiles = async (files: FileList | null) => {
+    if (!files) return;
+    for (const file of Array.from(files).slice(0, 4 - refImages.length)) {
+      try {
+        const b64 = await resizeToBase64(file, 500);
+        setRefImages((imgs) => (imgs.length >= 4 ? imgs : [...imgs, b64]));
+      } catch {
+        /* skip an unreadable image */
+      }
+    }
   };
+  const removeAt = (i: number) => setRefImages((imgs) => imgs.filter((_, j) => j !== i));
   const ct = m.data?.content_type || "image/jpeg";
   const ext = ct === "image/png" ? "png" : "jpg";
+  const promptLabel = count >= 2 ? "How should I mix them?" : count === 1 ? "How should I transform it?" : "Describe the image";
+  const promptPlaceholder =
+    count >= 2
+      ? "Combine the people from these photos into one group portrait in a park…"
+      : count === 1
+        ? "Turn this into a watercolor painting · a cyberpunk city · an oil portrait…"
+        : "A calm Japanese garden at dawn, soft mist, watercolor style…";
+  const buttonLabel = count >= 2 ? "Mix images" : count === 1 ? "Transform image" : "Generate image";
+  const workingLabel = count >= 2 ? "Mixing your images…" : count === 1 ? "Transforming your image…" : "Painting your image…";
 
   return (
     <div className="space-y-4">
-      <Field label={refImage ? "How should I transform it?" : "Describe the image"}>
+      <Field label={promptLabel}>
         <textarea
           className={cn(inputClass, "min-h-24 resize-y")}
-          placeholder={
-            refImage
-              ? "Turn this into a watercolor painting · a cyberpunk city · an oil portrait…"
-              : "A calm Japanese garden at dawn, soft mist, watercolor style…"
-          }
+          placeholder={promptPlaceholder}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
       </Field>
 
-      <Field label="Reference image (optional)">
-        {refImage ? (
-          <div className="flex items-start gap-3">
-            <img
-              src={`data:image/*;base64,${refImage}`}
-              alt="reference"
-              className="h-24 w-24 rounded-lg border border-slate-200 object-cover"
-            />
-            <div className="flex-1 space-y-2">
+      <Field label="Reference images (optional — up to 4; add 2+ to mix them into one)">
+        <div className="flex flex-wrap items-center gap-3">
+          {refImages.map((im, i) => (
+            <div key={i} className="relative">
+              <img
+                src={`data:image/png;base64,${im}`}
+                alt={`reference ${i}`}
+                className="h-24 w-24 rounded-lg border border-slate-200 object-cover"
+              />
               <button
                 type="button"
-                onClick={() => setRefImage(null)}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+                onClick={() => removeAt(i)}
+                title="Remove"
+                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
               >
-                Remove
+                <X className="h-3.5 w-3.5" />
               </button>
-              <div>
-                <label className="block text-xs text-slate-500">
-                  Strength {strength.toFixed(2)} —{" "}
-                  {strength <= 0.4 ? "stays close to your image" : strength >= 0.75 ? "loose / creative" : "balanced"}
-                </label>
-                <input
-                  type="range"
-                  min={0.1}
-                  max={0.95}
-                  step={0.05}
-                  value={strength}
-                  onChange={(e) => setStrength(Number(e.target.value))}
-                  className="w-full max-w-xs"
-                />
-              </div>
+              <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">image {i}</span>
             </div>
+          ))}
+          {count < 4 && (
+            <label className="flex h-24 w-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 bg-white text-xs text-slate-500 hover:bg-slate-50">
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => void addFiles(e.target.files)}
+              />
+              <Plus className="h-4 w-4" />
+              Add image
+            </label>
+          )}
+        </div>
+        {count === 1 && (
+          <div className="mt-3">
+            <label className="block text-xs text-slate-500">
+              Strength {strength.toFixed(2)} —{" "}
+              {strength <= 0.4 ? "stays close to your image" : strength >= 0.75 ? "loose / creative" : "balanced"}
+            </label>
+            <input
+              type="range"
+              min={0.1}
+              max={0.95}
+              step={0.05}
+              value={strength}
+              onChange={(e) => setStrength(Number(e.target.value))}
+              className="w-full max-w-xs"
+            />
           </div>
-        ) : (
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-600 hover:bg-slate-50">
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
-            <ImageIcon className="h-4 w-4" />
-            Upload an image to transform it
-          </label>
         )}
       </Field>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={generate} disabled={!prompt.trim() || m.isPending}>
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          {refImage ? "Transform image" : "Generate image"}
+          {buttonLabel}
         </Button>
-        {!refImage && (
+        {count === 0 && (
           <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 text-sm">
             {(["high", "fast"] as const).map((q) => (
               <button
@@ -238,7 +298,7 @@ function ImagePanel() {
           </div>
         )}
       </div>
-      {m.isPending && <Working label={refImage ? "Transforming your image…" : "Painting your image…"} />}
+      {m.isPending && <Working label={workingLabel} />}
       {m.isError && <ErrorLine message={errMsg(m.error)} />}
       {m.data && (
         <div className="space-y-3">
