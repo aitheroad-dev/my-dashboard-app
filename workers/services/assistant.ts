@@ -35,9 +35,11 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest";
 const MAX_STEPS = 4; // bounded read→loop rounds before we give up
 const MAX_HISTORY = 12; // trailing conversation turns kept
 const MAX_MSG_CHARS = 4000;
-const MAX_AI_MS = 22000; // hard ceiling on ONE model call — env.AI.run has no built-in timeout,
-// so a slow/hung GLM (or a MAX_STEPS loop of slow calls) would otherwise hang /api/assistant
-// forever and the UI's "Thinking…" never clears. On timeout we throw → Anthropic fallback → error.
+const MAX_AI_MS = 60000; // hard ceiling on ONE model call — env.AI.run has no built-in timeout,
+// so a slow/hung model would otherwise hang /api/assistant forever and the UI's "Thinking…"
+// never clears. On timeout we throw → Anthropic fallback → error. Set to 60s (was 22s): on
+// Workers AI, tool-calling on a real request (e.g. "create a page") reasons for ~30s across
+// EVERY model tested — 22s aborted those mid-flight and surfaced as "temporarily unavailable".
 
 /** Race a model call against a deadline. The underlying request may still finish in the
  * background; we stop awaiting so the handler returns an error instead of hanging. */
