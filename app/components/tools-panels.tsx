@@ -127,12 +127,15 @@ function ImagePanel() {
   const qc = useQueryClient();
   const [prompt, setPrompt] = useState("");
   const [quality, setQuality] = useState<"high" | "fast">("high");
+  const [refImage, setRefImage] = useState<string | null>(null); // base64 (no data: prefix) of the uploaded reference
+  const [strength, setStrength] = useState(0.6);
   // Synchronous re-entrancy guard: `disabled`/`isPending` only update on the next
   // render, so two clicks fired before that re-render both pass — a ref blocks the
   // second one instantly (this is what caused the duplicate image on the first test).
   const submitting = useRef(false);
   const m = useMutation({
-    mutationFn: () => callTool<FluxResult>("flux", { prompt, quality }),
+    mutationFn: () =>
+      callTool<FluxResult>("flux", refImage ? { prompt, image: refImage, strength } : { prompt, quality }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tools-gallery"] }),
     onSettled: () => {
       submitting.current = false;
@@ -143,50 +146,110 @@ function ImagePanel() {
     submitting.current = true;
     m.mutate();
   };
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result || "");
+      setRefImage(res.includes(",") ? res.slice(res.indexOf(",") + 1) : res);
+    };
+    reader.readAsDataURL(file);
+  };
+  const ct = m.data?.content_type || "image/jpeg";
+  const ext = ct === "image/png" ? "png" : "jpg";
 
   return (
     <div className="space-y-4">
-      <Field label="Describe the image">
+      <Field label={refImage ? "How should I transform it?" : "Describe the image"}>
         <textarea
           className={cn(inputClass, "min-h-24 resize-y")}
-          placeholder="A calm Japanese garden at dawn, soft mist, watercolor style…"
+          placeholder={
+            refImage
+              ? "Turn this into a watercolor painting · a cyberpunk city · an oil portrait…"
+              : "A calm Japanese garden at dawn, soft mist, watercolor style…"
+          }
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
       </Field>
+
+      <Field label="Reference image (optional)">
+        {refImage ? (
+          <div className="flex items-start gap-3">
+            <img
+              src={`data:image/*;base64,${refImage}`}
+              alt="reference"
+              className="h-24 w-24 rounded-lg border border-slate-200 object-cover"
+            />
+            <div className="flex-1 space-y-2">
+              <button
+                type="button"
+                onClick={() => setRefImage(null)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Remove
+              </button>
+              <div>
+                <label className="block text-xs text-slate-500">
+                  Strength {strength.toFixed(2)} —{" "}
+                  {strength <= 0.4 ? "stays close to your image" : strength >= 0.75 ? "loose / creative" : "balanced"}
+                </label>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={0.95}
+                  step={0.05}
+                  value={strength}
+                  onChange={(e) => setStrength(Number(e.target.value))}
+                  className="w-full max-w-xs"
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-600 hover:bg-slate-50">
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+            <ImageIcon className="h-4 w-4" />
+            Upload an image to transform it
+          </label>
+        )}
+      </Field>
+
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={generate} disabled={!prompt.trim() || m.isPending}>
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-          Generate image
+          {refImage ? "Transform image" : "Generate image"}
         </Button>
-        <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 text-sm">
-          {(["high", "fast"] as const).map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => setQuality(q)}
-              className={cn(
-                "px-3 py-2 transition-colors",
-                quality === q ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
-              )}
-            >
-              {q === "high" ? "High quality" : "Fast"}
-            </button>
-          ))}
-        </div>
+        {!refImage && (
+          <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 text-sm">
+            {(["high", "fast"] as const).map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setQuality(q)}
+                className={cn(
+                  "px-3 py-2 transition-colors",
+                  quality === q ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50",
+                )}
+              >
+                {q === "high" ? "High quality" : "Fast"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {m.isPending && <Working label="Painting your image…" />}
+      {m.isPending && <Working label={refImage ? "Transforming your image…" : "Painting your image…"} />}
       {m.isError && <ErrorLine message={errMsg(m.error)} />}
       {m.data && (
         <div className="space-y-3">
           <img
-            src={`data:image/jpeg;base64,${m.data.image_base64}`}
+            src={`data:${ct};base64,${m.data.image_base64}`}
             alt={m.data.prompt}
             className="w-full rounded-xl border border-slate-200"
           />
           <a
-            href={`data:image/jpeg;base64,${m.data.image_base64}`}
-            download={`image-${Date.now()}.jpg`}
+            href={`data:${ct};base64,${m.data.image_base64}`}
+            download={`image-${Date.now()}.${ext}`}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <Download className="h-4 w-4" />

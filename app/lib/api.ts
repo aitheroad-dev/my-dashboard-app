@@ -103,6 +103,7 @@ export interface ToolsStatus {
 export interface FluxResult {
   image_url: string;
   image_base64: string;
+  content_type?: string;
   prompt: string;
   quality: string;
 }

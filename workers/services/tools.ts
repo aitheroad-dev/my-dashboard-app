@@ -67,6 +67,19 @@ async function runAI(env: AppEnv, model: string, input: unknown, options?: unkno
 function decodeB64(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
+
+/** Encode bytes → base64 in 32 KB chunks (avoids arg-count overflow on big images). */
+function encodeB64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+/** Strip a `data:...;base64,` prefix if the client sent a full data URL. */
+function stripDataUrl(s: string): string {
+  const i = s.indexOf(",");
+  return s.startsWith("data:") && i >= 0 ? s.slice(i + 1) : s;
+}
 function approxBytes(b64: string): number {
   return Math.floor((b64.length * 3) / 4);
 }
@@ -154,10 +167,47 @@ function capitalize(value: string): string {
 
 export async function generateImage(
   env: AppEnv,
-  input: { prompt?: unknown; quality?: unknown },
+  input: { prompt?: unknown; quality?: unknown; image?: unknown; strength?: unknown },
 ): Promise<Record<string, unknown>> {
   const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
   if (!prompt) throw new ToolError(400, "A prompt is required.");
+
+  // Reference-image (img2img): if the caller supplies an input image, TRANSFORM it
+  // with SD-1.5 img2img — the only native Workers-AI model that accepts an input
+  // image. `strength` = how far the result drifts from the source (0.1 close … 0.95
+  // loose). SD-1.5 returns raw PNG bytes (not base64 JSON like flux), so we read the
+  // raw response like the Aura audio path. (Identity is NOT preserved — this varies
+  // the picture; true likeness-lock needs a heavier external model.)
+  const inputImage = typeof input.image === "string" ? stripDataUrl(input.image.trim()) : "";
+  if (inputImage) {
+    if (approxBytes(inputImage) > MAX_MEDIA_BYTES) throw new ToolError(400, "Reference image exceeds the 25 MB limit.");
+    let strength = typeof input.strength === "number" ? input.strength : Number(input.strength);
+    if (!Number.isFinite(strength)) strength = 0.6;
+    strength = Math.min(0.95, Math.max(0.1, strength));
+
+    const aiResp = (await runAI(
+      env,
+      "@cf/runwayml/stable-diffusion-v1-5-img2img",
+      { prompt, image_b64: inputImage, strength },
+      { returnRawResponse: true },
+    )) as Response | ReadableStream;
+    const ab =
+      aiResp instanceof Response ? await aiResp.arrayBuffer() : await new Response(aiResp).arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    if (!bytes.length) throw new ToolError(502, "No image was returned by the model.");
+
+    const id = crypto.randomUUID();
+    await env.KV.put(`${IMG_PREFIX}${id}`, bytes, { metadata: { contentType: "image/png" } });
+    await pushIndex(env, IMG_INDEX, { id, prompt, quality: "img2img", ts: Date.now() }, { blobPrefix: IMG_PREFIX });
+    return {
+      image_url: `/api/tools/media/img/${id}`,
+      image_base64: encodeB64(bytes),
+      content_type: "image/png",
+      prompt,
+      quality: "img2img",
+    };
+  }
+
   const quality = input.quality === "fast" ? "fast" : "high";
   const model = quality === "fast" ? "@cf/black-forest-labs/flux-1-schnell" : "@cf/leonardo/lucid-origin";
   const aiInput = quality === "fast" ? { prompt, steps: 4 } : { prompt };
@@ -174,6 +224,7 @@ export async function generateImage(
   return {
     image_url: `/api/tools/media/img/${id}`,
     image_base64: result.image,
+    content_type: "image/jpeg",
     prompt,
     quality,
   };
