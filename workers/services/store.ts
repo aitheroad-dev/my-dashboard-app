@@ -19,6 +19,71 @@ export function clampLimit(raw: string | null, max = 1000): number {
   return Math.min(n, max);
 }
 
+// ---- Assistant conversation history (0008) ----
+export type AssistantTurn = { role: "user" | "assistant"; content: string };
+
+/** Append turns to a conversation. Best-effort: caller should not fail the reply
+ * on a persistence error. Timestamps are staggered by index so within-batch order
+ * is stable; empty turns are dropped. */
+export async function appendAssistantMessages(
+  env: AppEnv,
+  conversationId: string,
+  turns: AssistantTurn[],
+): Promise<void> {
+  const clean = turns
+    .map((t) => ({
+      role: t.role === "assistant" ? "assistant" : "user",
+      content: String(t.content ?? "").slice(0, 4000),
+    }))
+    .filter((t) => t.content.trim().length > 0);
+  if (!conversationId || clean.length === 0) return;
+  const base = Date.now();
+  await env.DB.batch(
+    clean.map((t, i) =>
+      env.DB
+        .prepare(
+          "INSERT INTO assistant_messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(crypto.randomUUID(), conversationId, t.role, t.content, new Date(base + i).toISOString()),
+    ),
+  );
+}
+
+/** Turns of a conversation, oldest first. */
+export async function listAssistantMessages(
+  env: AppEnv,
+  conversationId: string,
+  limit = 200,
+): Promise<AssistantTurn[]> {
+  const { results } = await env.DB
+    .prepare(
+      "SELECT role, content FROM assistant_messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?",
+    )
+    .bind(conversationId, limit)
+    .all<{ role: string; content: string }>();
+  return (results ?? []).map((r) => ({
+    role: r.role === "assistant" ? "assistant" : "user",
+    content: r.content,
+  }));
+}
+
+/** The conversation_id of the most recent message, or null if there is no history. */
+export async function latestConversationId(env: AppEnv): Promise<string | null> {
+  const row = await env.DB
+    .prepare("SELECT conversation_id FROM assistant_messages ORDER BY created_at DESC, rowid DESC LIMIT 1")
+    .first<{ conversation_id: string }>();
+  return row?.conversation_id ?? null;
+}
+
+/** Delete one conversation, or ALL history when no id is given. */
+export async function clearAssistantHistory(env: AppEnv, conversationId?: string): Promise<void> {
+  if (conversationId) {
+    await env.DB.prepare("DELETE FROM assistant_messages WHERE conversation_id = ?").bind(conversationId).run();
+  } else {
+    await env.DB.prepare("DELETE FROM assistant_messages").run();
+  }
+}
+
 // ---- Board (cards) — the personal Kanban; replaces projects/goals ----
 
 export const CARD_STATUSES = ["todo", "in_progress", "done"] as const;

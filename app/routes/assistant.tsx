@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Sparkles, Send, Check, X, Zap, Brain, Mic, Square, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Sparkles, Send, Check, X, Zap, Brain, Mic, Square, Loader2, Plus } from "lucide-react";
 import type { Route } from "./+types/assistant";
-import { useRequireEnabled, apiPost, callTool, type WhisperResult } from "../lib/api";
+import { useRequireEnabled, apiGet, apiPost, callTool, type WhisperResult } from "../lib/api";
 import { useRecorder } from "../lib/useRecorder";
 import { cn } from "../lib/utils";
 import type { PendingPlan } from "../lib/spec-api";
@@ -23,6 +23,7 @@ type AssistantRes = {
   pending?: Pending | null;
   pendingPlan?: PendingPlan | null;
   committed?: { tool: string; summary: string } | null;
+  conversation_id?: string;
 };
 
 export default function Assistant() {
@@ -35,10 +36,48 @@ export default function Assistant() {
   const [mode, setMode] = useState<Mode>("fast");
   const [pending, setPending] = useState<Pending | null>(null);
   const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null);
+  const [conversationId, setConversationId] = useState<string>("");
 
   // The conversation the model sees — mapped from displayed turns.
   const historyFrom = (ts: Turn[]) =>
     ts.map((t) => ({ role: t.role === "you" ? ("user" as const) : ("assistant" as const), content: t.text }));
+
+  // Restore the last conversation on open so it survives a tab close. Client-only
+  // (avoids an SSR/hydration mismatch); falls back to a fresh conversation id.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiGet<{
+          conversation_id: string | null;
+          turns: { role: "user" | "assistant"; content: string }[];
+        }>("/api/assistant/history");
+        if (cancelled) return;
+        if (res.conversation_id) {
+          setConversationId(res.conversation_id);
+          setTurns(res.turns.map((t) => ({ role: t.role === "assistant" ? "assistant" : "you", text: t.content })));
+        } else {
+          setConversationId(crypto.randomUUID());
+        }
+      } catch {
+        if (!cancelled) setConversationId((id) => id || crypto.randomUUID());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Start a fresh thread (non-destructive — prior conversations stay in the DB).
+  function newChat() {
+    if (busy) return;
+    setConversationId(crypto.randomUUID());
+    setTurns([]);
+    setPending(null);
+    setPendingPlan(null);
+    setError(null);
+    setQuestion("");
+  }
 
   // Core send — shared by the text form and the voice (push-to-talk) path, so the
   // transcript can be dispatched directly without waiting on `question` state.
@@ -53,7 +92,12 @@ export default function Assistant() {
     setTurns(nextTurns);
     setQuestion("");
     try {
-      const res = await apiPost<AssistantRes>("/api/assistant", { messages: historyFrom(nextTurns), mode });
+      const res = await apiPost<AssistantRes>("/api/assistant", {
+        messages: historyFrom(nextTurns),
+        mode,
+        conversation_id: conversationId,
+      });
+      if (res.conversation_id) setConversationId(res.conversation_id);
       setTurns((t) => [...t, { role: "assistant", text: res.answer, meta: `${res.source} · ${res.model}` }]);
       if (res.pending) setPending(res.pending);
       if (res.pendingPlan) setPendingPlan(res.pendingPlan);
@@ -95,7 +139,12 @@ export default function Assistant() {
     setError(null);
     setPending(null);
     try {
-      const res = await apiPost<AssistantRes>("/api/assistant", { confirm: { tool: p.tool, args: p.args }, mode });
+      const res = await apiPost<AssistantRes>("/api/assistant", {
+        confirm: { tool: p.tool, args: p.args },
+        mode,
+        conversation_id: conversationId,
+      });
+      if (res.conversation_id) setConversationId(res.conversation_id);
       setTurns((t) => [...t, { role: "assistant", text: res.answer, meta: `${res.source} · ${res.model}` }]);
     } catch (err) {
       setError((err as Error).message);
@@ -134,6 +183,15 @@ export default function Assistant() {
           }
         >
           <Brain className="h-3 w-3" /> Deep reasoning
+        </button>
+        <button
+          type="button"
+          onClick={newChat}
+          disabled={busy || turns.length === 0}
+          title="Start a new conversation"
+          className="ml-auto inline-flex items-center gap-1 rounded-full px-3 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+        >
+          <Plus className="h-3 w-3" /> New chat
         </button>
       </div>
 
@@ -232,7 +290,7 @@ export default function Assistant() {
           {recorder.recording && (
             <span className="flex items-center gap-1.5 text-red-600">
               <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" />
-              Listening… tap the square to stop &amp; send (auto-stops at 2 min).
+              Listening… tap the square to stop &amp; send (auto-stops at 5 min).
             </span>
           )}
           {transcribing && <span className="text-slate-500">Transcribing…</span>}

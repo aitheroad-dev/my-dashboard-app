@@ -5,6 +5,11 @@ import { runAssistant } from "../services/assistant";
 import {
   clampLimit,
   listCards,
+  appendAssistantMessages,
+  listAssistantMessages,
+  latestConversationId,
+  clearAssistantHistory,
+  type AssistantTurn,
   addCard,
   editCard,
   moveCard,
@@ -355,7 +360,7 @@ data.post("/assistant", async (c) => {
   if (viewer.mode !== "access" || !viewer.isOwner) {
     return c.json({ error: "Enable Cloudflare Access on this fork to use the assistant." }, 403);
   }
-  let body: { question?: unknown; messages?: unknown; mode?: unknown; confirm?: unknown };
+  let body: { question?: unknown; messages?: unknown; mode?: unknown; confirm?: unknown; conversation_id?: unknown };
   try {
     body = await c.req.json();
   } catch {
@@ -389,10 +394,63 @@ data.post("/assistant", async (c) => {
 
   if (!confirm && messages.length === 0) return c.json({ error: "Ask a question." }, 400);
 
+  const conversationId =
+    typeof body.conversation_id === "string" && body.conversation_id.trim()
+      ? body.conversation_id.trim()
+      : crypto.randomUUID();
+
   try {
-    return c.json(await runAssistant(c.env, { messages, mode, confirm, actor: viewer.email }));
+    const result = await runAssistant(c.env, { messages, mode, confirm, actor: viewer.email });
+    // Persist the exchange so the chat survives a tab close (best-effort — a history
+    // write must never fail the reply). Normal ask → save the new user msg + answer;
+    // confirm path → save just the answer (there is no new user message).
+    try {
+      const toSave: AssistantTurn[] = [];
+      if (!confirm) {
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        if (lastUser) toSave.push({ role: "user", content: lastUser.content });
+      }
+      if (result.answer) toSave.push({ role: "assistant", content: result.answer });
+      if (toSave.length) await appendAssistantMessages(c.env, conversationId, toSave);
+    } catch (e) {
+      console.error("assistant history persist failed:", (e as Error).message);
+    }
+    return c.json({ ...result, conversation_id: conversationId });
   } catch (e) {
     console.error("assistant error:", (e as Error).message);
     return c.json({ error: "The assistant is temporarily unavailable." }, 502);
   }
+});
+
+// Assistant history — restore the latest conversation on open; clear on demand.
+// Same owner-gated posture as POST /assistant.
+data.get("/assistant/history", async (c) => {
+  let viewer;
+  try {
+    viewer = await requireViewer(c.req.raw, c.env);
+  } catch (res) {
+    if (res instanceof Response) return res;
+    throw res;
+  }
+  if (viewer.mode !== "access" || !viewer.isOwner) {
+    return c.json({ error: "Enable Cloudflare Access on this fork to use the assistant." }, 403);
+  }
+  const conversation_id = await latestConversationId(c.env);
+  const turns = conversation_id ? await listAssistantMessages(c.env, conversation_id, 200) : [];
+  return c.json({ conversation_id, turns });
+});
+
+data.delete("/assistant/history", async (c) => {
+  let viewer;
+  try {
+    viewer = await requireViewer(c.req.raw, c.env);
+  } catch (res) {
+    if (res instanceof Response) return res;
+    throw res;
+  }
+  if (viewer.mode !== "access" || !viewer.isOwner) {
+    return c.json({ error: "Enable Cloudflare Access on this fork to use the assistant." }, 403);
+  }
+  await clearAssistantHistory(c.env);
+  return c.json({ ok: true });
 });
