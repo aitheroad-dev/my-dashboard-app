@@ -9,7 +9,8 @@ import { useEffect, useRef, useState } from "react";
  * (not in a component file) so any surface can reuse one hardened implementation.
  */
 
-export const MAX_RECORD_MS = 120_000; // cap a recording at 2 min (memory + upload size)
+export const MAX_RECORD_MS = 300_000; // cap a recording at 5 min (memory + upload size). Beyond a
+// few minutes the right path is chunked transcription, not a bigger single base64 WAV upload.
 
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = "";
