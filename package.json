@@ -52,6 +52,7 @@
     "check:clean": "node scripts/check-template-clean.mjs",
     "deploy": "bun run check:clean && bun run build && wrangler deploy",
     "dev": "react-router dev",
+    "fleet": "node scripts/deploy-fleet.mjs",
     "migrate": "bun scripts/migrate.ts",
     "preview": "bun run build && vite preview",
     "typecheck": "bun run cf-typegen && react-router typegen && tsc -b"
