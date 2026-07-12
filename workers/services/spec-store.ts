@@ -700,21 +700,27 @@ export async function listRecords(env: AppEnv, entityKey: string, query: RecordL
   if (query.sort && !sortField) throw new Error(`no field ${query.sort.field}`);
   if (query.filter && !filterField) throw new Error(`no field ${query.filter.field}`);
 
+  // Params MUST bind in SQL placeholder order: JOIN field_ids first (they appear in the
+  // FROM clause), then WHERE params, then LIMIT. The previous version pushed entity.id
+  // first → the JOIN's field_id consumed it → WHERE r.entity_id = <field uuid> matched
+  // nothing, so every sorted/filtered list silently returned []. (Found live 2026-07-12
+  // when the first template with a default sort shipped.)
   const joins: string[] = [];
-  const params: unknown[] = [resolved.entity.id];
+  const joinParams: unknown[] = [];
   const where: string[] = ["r.entity_id = ?"];
+  const whereParams: unknown[] = [resolved.entity.id];
   if (filterField && query.filter) {
     joins.push("JOIN sd_record_values rv ON rv.record_id = r.id AND rv.field_id = ?");
-    params.push(filterField.id);
+    joinParams.push(filterField.id);
     const predicate = filterPredicate(query.filter, filterField);
     where.push(predicate.sql);
-    params.push(...predicate.params);
+    whereParams.push(...predicate.params);
   }
   if (sortField) {
     joins.push("LEFT JOIN sd_record_values sv ON sv.record_id = r.id AND sv.field_id = ?");
-    params.push(sortField.id);
+    joinParams.push(sortField.id);
   }
-  params.push(limit);
+  const params: unknown[] = [...joinParams, ...whereParams, limit];
 
   const order =
     sortField && query.sort
