@@ -607,7 +607,11 @@ export async function importRecords(
     await assertUniqueValues(env, resolved.entity.id, resolved.fields, canonicals[i]);
     for (const field of resolved.fields) {
       if (!parseFieldConfig(field).unique || canonicals[i][field.key] === undefined) continue;
-      const value = String(canonicals[i][field.key]);
+      // Key the intra-import dedup on the PROJECTED value — the same representation the
+      // DB uniqueness check uses — so coercion-divergent inputs (e.g. two date spellings
+      // of the same day) can't slip past as "different strings" (Forge LOW).
+      const projected = projectValue(field, canonicals[i][field.key]);
+      const value = projected.valueText !== null ? `t:${projected.valueText}` : `n:${projected.valueNum}`;
       const set = seenUnique.get(field.key) ?? new Set<string>();
       if (set.has(value)) throw new Error(`record ${i + 1}: field ${field.key} duplicated within the import`);
       set.add(value);
@@ -617,6 +621,7 @@ export async function importRecords(
 
   const ts = nowIso();
   const basePosition = Date.now();
+  const totalChunks = Math.ceil(canonicals.length / IMPORT_CHUNK);
   let written = 0;
   for (let start = 0; start < canonicals.length; start += IMPORT_CHUNK) {
     const chunk = canonicals.slice(start, start + IMPORT_CHUNK);
@@ -630,11 +635,15 @@ export async function importRecords(
       );
       statements.push(...recordValueStatements(env, resolved.entity.id, id, resolved.fields, canonical));
     });
-    if (start + IMPORT_CHUNK >= canonicals.length) {
-      statements.push(
-        auditStatement(env, "spec.record.import", entityKey, actor, `import ${canonicals.length} records into ${entityKey}`),
-      );
-    }
+    // EVERY chunk carries its own audit row, atomic with that chunk's data (Forge HIGH:
+    // a mid-import infra failure must never leave committed rows unaudited). Single-chunk
+    // imports keep the simple one-line summary; multi-chunk summaries are numbered.
+    const chunkNo = Math.floor(start / IMPORT_CHUNK) + 1;
+    const summary =
+      totalChunks === 1
+        ? `import ${canonicals.length} records into ${entityKey}`
+        : `import chunk ${chunkNo}/${totalChunks} (${chunk.length} records) into ${entityKey}`;
+    statements.push(auditStatement(env, "spec.record.import", entityKey, actor, summary));
     await env.DB.batch(statements);
     written += chunk.length;
   }
