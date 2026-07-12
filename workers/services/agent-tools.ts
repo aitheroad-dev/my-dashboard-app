@@ -6,7 +6,7 @@ import {
   type FieldSpec,
   type Plan,
 } from "../lib/spec/schema";
-import { buildTemplatePlan, slugifyKey, type TemplateKey } from "./spec-catalog";
+import { TEMPLATE_KEYS, buildTemplatePlan, slugifyKey, type TemplateKey } from "./spec-catalog";
 import {
   listCards,
   getPortfolio,
@@ -18,11 +18,21 @@ import {
   editCard,
   moveCard,
   deleteCard,
+  addKbDoc,
+  editKbDoc,
   normalizeDueDate,
   normalizePriority,
   parseLabels,
   parseChecklist,
 } from "./store";
+import {
+  addRecord,
+  editRecord,
+  deleteRecord,
+  importRecords,
+  listEntitiesWithFields,
+  listRecords,
+} from "./spec-store";
 
 /**
  * Agent tool registry (P3 Slice 3b, ISC-79/81). The built-in Assistant's
@@ -131,6 +141,20 @@ function toChecklist(raw: unknown): Array<{ text: string; done: boolean }> {
     })
     .filter((i) => i.text);
 }
+/** KB content from the model (W1): structured `blocks` pass straight through (store's
+ * normalizeBlocks + the XSS-safe renderer own validation); plain `text` becomes paragraph
+ * blocks split on blank lines — the model-friendly default. */
+function toKbBlocks(a: Record<string, unknown>): unknown {
+  if (Array.isArray(a.blocks)) return a.blocks;
+  const text = str(a.text);
+  if (!text) return [];
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => ({ type: "paragraph", text: p }));
+}
+
 /** Map the model's raw enrichment args → the EXACT values that will persist: run them
  * through store's own sanitizers here so (1) store re-parsing is idempotent and (2)
  * describeEnrichment can show the owner precisely what the confirmed write commits — no
@@ -281,6 +305,134 @@ export const AGENT_TOOLS: AgentTool[] = [
     summarize: (a) => `Delete card ${str(a.id)}`,
   },
 
+  // ---------- RECORD READS (W1 self-build: ground the model in real entity/field keys) ----------
+  {
+    name: "list_entities",
+    kind: "read",
+    description:
+      "List all declared data types (entities) with their exact field keys, types, and select options. ALWAYS call this before adding/editing/importing records so you use real entity keys and field keys.",
+    parameters: { type: "object", properties: {} },
+    run: (env) => listEntitiesWithFields(env),
+    summarize: () => "List data types",
+  },
+  {
+    name: "list_records",
+    kind: "read",
+    description: "List records of a declared data type (entity). Call this to find a record's id before editing or deleting it, or to answer questions about a declared page's content.",
+    parameters: {
+      type: "object",
+      properties: { entity_key: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 200 } },
+      required: ["entity_key"],
+    },
+    run: (env, a) => listRecords(env, str(a.entity_key), { limit: typeof a.limit === "number" ? a.limit : 50 }),
+    summarize: (a) => `List ${str(a.entity_key)} records`,
+  },
+
+  // ---------- RECORD + KB WRITES (W1; proposed only, run after explicit owner confirm) ----------
+  {
+    name: "add_record",
+    kind: "write",
+    description:
+      "Add one record to a declared data type. `data` maps field keys to values (use list_entities for the exact keys; dates as YYYY-MM-DD; single_select must match an option).",
+    parameters: {
+      type: "object",
+      properties: { entity_key: { type: "string" }, data: { type: "object" } },
+      required: ["entity_key", "data"],
+    },
+    run: (env, a, actor) =>
+      addRecord(env, str(a.entity_key), (a.data && typeof a.data === "object" ? a.data : {}) as Record<string, unknown>, actor || "assistant"),
+    summarize: (a) => `Add a ${str(a.entity_key)} record`,
+  },
+  {
+    name: "edit_record",
+    kind: "write",
+    description:
+      "Replace a record's data. Send the FULL new data object (all fields you want kept) — this is a full replace, not a merge. Needs the record id from list_records.",
+    parameters: {
+      type: "object",
+      properties: { entity_key: { type: "string" }, id: { type: "string" }, data: { type: "object" } },
+      required: ["entity_key", "id", "data"],
+    },
+    run: (env, a, actor) =>
+      editRecord(env, str(a.entity_key), str(a.id), (a.data && typeof a.data === "object" ? a.data : {}) as Record<string, unknown>, actor || "assistant"),
+    summarize: (a) => `Edit a ${str(a.entity_key)} record`,
+  },
+  {
+    name: "delete_record",
+    kind: "write",
+    description: "Delete a record from a declared data type. Needs the record id from list_records.",
+    parameters: {
+      type: "object",
+      properties: { entity_key: { type: "string" }, id: { type: "string" } },
+      required: ["entity_key", "id"],
+    },
+    run: (env, a, actor) => deleteRecord(env, str(a.entity_key), str(a.id), actor || "assistant"),
+    summarize: (a) => `Delete a ${str(a.entity_key)} record`,
+  },
+  {
+    name: "import_records",
+    kind: "write",
+    description:
+      "Bulk-import up to 100 records into a declared data type in one go. `records` is an array of data objects (field key → value). Every row is validated before anything is written.",
+    parameters: {
+      type: "object",
+      properties: {
+        entity_key: { type: "string" },
+        records: { type: "array", items: { type: "object" }, maxItems: 100 },
+      },
+      required: ["entity_key", "records"],
+    },
+    run: (env, a, actor) =>
+      importRecords(env, str(a.entity_key), Array.isArray(a.records) ? a.records : [], actor || "assistant"),
+    summarize: (a) => `Import ${Array.isArray(a.records) ? a.records.length : 0} ${str(a.entity_key)} records`,
+  },
+  {
+    name: "add_kb_doc",
+    kind: "write",
+    description:
+      'Create a knowledge-base document. Provide a lowercase-hyphen slug, a title, and either `text` (plain paragraphs, split on blank lines) or `blocks` (structured blocks like {"type":"paragraph","text":"..."}).',
+    parameters: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        title: { type: "string" },
+        text: { type: "string" },
+        blocks: { type: "array", items: { type: "object" } },
+      },
+      required: ["slug", "title"],
+    },
+    run: (env, a, actor) =>
+      addKbDoc(env, { slug: str(a.slug), title: str(a.title), blocks: toKbBlocks(a) }, actor || "assistant"),
+    summarize: (a) => `Create KB doc "${str(a.title) || str(a.slug)}"`,
+  },
+  {
+    name: "edit_kb_doc",
+    kind: "write",
+    description:
+      "Update an existing knowledge-base document's title and/or content (same `text`/`blocks` options as add_kb_doc; omitted parts are kept).",
+    parameters: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        title: { type: "string" },
+        text: { type: "string" },
+        blocks: { type: "array", items: { type: "object" } },
+      },
+      required: ["slug"],
+    },
+    run: (env, a, actor) =>
+      editKbDoc(
+        env,
+        {
+          slug: str(a.slug),
+          ...(a.title !== undefined ? { title: str(a.title) } : {}),
+          ...(a.text !== undefined || a.blocks !== undefined ? { blocks: toKbBlocks(a) } : {}),
+        },
+        actor || "assistant",
+      ),
+    summarize: (a) => `Edit KB doc "${str(a.slug)}"`,
+  },
+
   // ---------- DECLARES (persisted spec plans; run only after owner applies plan) ----------
   {
     name: "apply_template",
@@ -289,7 +441,7 @@ export const AGENT_TOOLS: AgentTool[] = [
     parameters: {
       type: "object",
       properties: {
-        template: { type: "string", enum: ["clients_crm", "sessions_log", "meetings_tracker"] },
+        template: { type: "string", enum: [...TEMPLATE_KEYS] },
         page_title: { type: "string" },
       },
       required: ["template"],

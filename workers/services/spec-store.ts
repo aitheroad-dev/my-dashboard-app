@@ -520,6 +520,127 @@ export async function editRecord(
   return { ...parseRecord(current), data: canonical, updated_at: ts };
 }
 
+export type EntityWithFields = {
+  key: string;
+  singular: string;
+  plural: string;
+  fields: Array<{ key: string; label: string; type: string; required: boolean; unique: boolean; options?: string[] }>;
+};
+
+/** All declared entities WITH their field schemas — the Assistant's grounding read so the
+ * model targets real entity keys + field keys instead of hallucinating them (W1, ISC-131). */
+export async function listEntitiesWithFields(env: AppEnv): Promise<EntityWithFields[]> {
+  const [entities, fields] = await Promise.all([
+    listEntities(env),
+    getDb(env)<FieldRow>`
+      SELECT id, entity_id, key, label, type, config, required, position, created_at
+      FROM sd_fields ORDER BY position ASC
+    `,
+  ]);
+  return entities.map((entity) => ({
+    key: entity.key,
+    singular: entity.singular,
+    plural: entity.plural,
+    fields: fields
+      .filter((field) => field.entity_id === entity.id)
+      .map((field) => {
+        const config = parseFieldConfig(field);
+        return {
+          key: field.key,
+          label: field.label,
+          type: field.type,
+          required: field.required === 1,
+          unique: config.unique === true,
+          ...(config.options?.length ? { options: config.options } : {}),
+        };
+      }),
+  }));
+}
+
+/** Canonicalize a proposed record WITHOUT writing — powers the Confirm card so the owner
+ * sees the EXACT values that will persist (same no-gap rule as card enrichment). */
+export async function canonicalizeForEntity(
+  env: AppEnv,
+  entityKey: string,
+  data: Record<string, unknown>,
+): Promise<{ singular: string; plural: string; canonical: Record<string, unknown> }> {
+  const resolved = await getEntityByKey(env, entityKey);
+  if (!resolved) throw new Error(`no entity ${entityKey}`);
+  return {
+    singular: resolved.entity.singular,
+    plural: resolved.entity.plural,
+    canonical: canonicalData(resolved.fields, data),
+  };
+}
+
+const IMPORT_MAX_ROWS = 100;
+const IMPORT_CHUNK = 20;
+
+/**
+ * Bulk import (W1). Validates EVERY row up front (canonicalize + DB uniqueness + intra-batch
+ * uniqueness, with 1-based row numbers in errors) so the only mid-write failure left is infra;
+ * then inserts in bounded D1 batches. Exactly ONE audit row for the whole import, riding the
+ * final chunk. Position preserves input order.
+ */
+export async function importRecords(
+  env: AppEnv,
+  entityKey: string,
+  rows: unknown[],
+  actor: string,
+): Promise<{ imported: number }> {
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("records must be a non-empty array");
+  if (rows.length > IMPORT_MAX_ROWS) throw new Error(`too many records (max ${IMPORT_MAX_ROWS} per import)`);
+  const resolved = await getEntityByKey(env, entityKey);
+  if (!resolved) throw new Error(`no entity ${entityKey}`);
+
+  const canonicals = rows.map((row, i) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`record ${i + 1} must be an object`);
+    try {
+      return canonicalData(resolved.fields, row as Record<string, unknown>);
+    } catch (e) {
+      throw new Error(`record ${i + 1}: ${(e as Error).message}`);
+    }
+  });
+
+  const seenUnique = new Map<string, Set<string>>();
+  for (let i = 0; i < canonicals.length; i++) {
+    await assertUniqueValues(env, resolved.entity.id, resolved.fields, canonicals[i]);
+    for (const field of resolved.fields) {
+      if (!parseFieldConfig(field).unique || canonicals[i][field.key] === undefined) continue;
+      const value = String(canonicals[i][field.key]);
+      const set = seenUnique.get(field.key) ?? new Set<string>();
+      if (set.has(value)) throw new Error(`record ${i + 1}: field ${field.key} duplicated within the import`);
+      set.add(value);
+      seenUnique.set(field.key, set);
+    }
+  }
+
+  const ts = nowIso();
+  const basePosition = Date.now();
+  let written = 0;
+  for (let start = 0; start < canonicals.length; start += IMPORT_CHUNK) {
+    const chunk = canonicals.slice(start, start + IMPORT_CHUNK);
+    const statements: D1PreparedStatement[] = [];
+    chunk.forEach((canonical, j) => {
+      const id = crypto.randomUUID();
+      statements.push(
+        env.DB.prepare(
+          "INSERT INTO sd_records (id, entity_id, data, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ).bind(id, resolved.entity.id, JSON.stringify(canonical), basePosition + start + j, ts, ts),
+      );
+      statements.push(...recordValueStatements(env, resolved.entity.id, id, resolved.fields, canonical));
+    });
+    if (start + IMPORT_CHUNK >= canonicals.length) {
+      statements.push(
+        auditStatement(env, "spec.record.import", entityKey, actor, `import ${canonicals.length} records into ${entityKey}`),
+      );
+    }
+    await env.DB.batch(statements);
+    written += chunk.length;
+  }
+  return { imported: written };
+}
+
 export async function deleteRecord(env: AppEnv, entityKey: string, id: string, actor: string): Promise<{ id: string }> {
   const resolved = await getEntityByKey(env, entityKey);
   if (!resolved) throw new Error(`no entity ${entityKey}`);
