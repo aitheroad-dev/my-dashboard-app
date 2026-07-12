@@ -126,7 +126,11 @@ async function dashboardContext(env: AppEnv): Promise<string> {
     listKbDocs(env, 50),
     listEntitiesWithFields(env),
   ]);
-  const inColumn = (s: string) => cards.filter((c) => c.status === s).map((c) => c.title);
+  // Free-text titles are user/model-authored and re-enter the SYSTEM prompt — strip
+  // fence-relevant characters + bound length so a crafted title can't weaken the
+  // <dashboard_context> data fence (GPT audit MED). Content stays readable.
+  const fenceSafe = (s: string) => s.replace(/[<>`]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  const inColumn = (s: string) => cards.filter((c) => c.status === s).map((c) => fenceSafe(c.title));
   const join = (xs: string[]) => (xs.length ? xs.join("; ") : "none");
   // Spec record CONTENT stays excluded from automatic context (ISC-124) — the model reads it
   // on demand via list_records. Entity SCHEMAS (keys + field keys) are included (W1): without
@@ -135,7 +139,7 @@ async function dashboardContext(env: AppEnv): Promise<string> {
     `Board — To Do (${inColumn("todo").length}): ${join(inColumn("todo"))}`,
     `Board — In Progress (${inColumn("in_progress").length}): ${join(inColumn("in_progress"))}`,
     `Board — Done (${inColumn("done").length}): ${join(inColumn("done"))}`,
-    `Knowledge base (${kb.length}): ${join(kb.map((d) => d.title))}`,
+    `Knowledge base (${kb.length}): ${join(kb.map((d) => fenceSafe(d.title)))}`,
     `Declared data types (${entities.length}): ${join(entities.map((e) => `${e.key} [${e.fields.map((f) => f.key).join(", ")}]`))}`,
   ].join("\n");
 }

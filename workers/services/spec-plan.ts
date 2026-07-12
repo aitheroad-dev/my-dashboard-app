@@ -125,6 +125,15 @@ export async function proposePlan(
   if (!v.ok) throw new Error("invalid plan: " + v.errors.join("; "));
   if (v.value.actions.length > MAX_PLAN_ACTIONS) throw new Error("too many plan actions");
 
+  // Cap unexpired pending plans (GPT audit MED): proposals are non-destructive and
+  // TTL'd, but without a ceiling a prompt-injected assistant turn could spam rows.
+  const pendingCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM sd_pending_plans WHERE status = 'pending' AND expires_at > ?",
+  ).bind(nowIso()).first<{ n: number }>();
+  if ((pendingCount?.n ?? 0) >= 10) {
+    throw new Error("too many pending proposals — approve or reject some first");
+  }
+
   const planId = crypto.randomUUID();
   const planJson = JSON.stringify(v.value);
   const hash = await schemaHash(env, v.value);
@@ -132,11 +141,20 @@ export async function proposePlan(
   const createdAt = nowIso();
   const expiresAt = nowIso(new Date(Date.now() + PLAN_TTL_MS));
 
-  await env.DB.prepare(
-    "INSERT INTO sd_pending_plans (id, plan_json, schema_hash, impact_json, actor, status, idempotency_key, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  )
-    .bind(planId, planJson, hash, JSON.stringify(impact), actor, "pending", crypto.randomUUID(), createdAt, expiresAt)
-    .run();
+  // Pending-plan insert + its audit row commit atomically (GPT audit MED: the propose
+  // step previously left no mcp_activity trace).
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO sd_pending_plans (id, plan_json, schema_hash, impact_json, actor, status, idempotency_key, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).bind(planId, planJson, hash, JSON.stringify(impact), actor, "pending", crypto.randomUUID(), createdAt, expiresAt),
+    env.DB.prepare("INSERT INTO mcp_activity (ts, tool, target, actor, summary) VALUES (?, ?, ?, ?, ?)").bind(
+      createdAt,
+      "spec.plan.propose",
+      planId,
+      actor,
+      `propose plan (${v.value.actions.length} action${v.value.actions.length === 1 ? "" : "s"})`,
+    ),
+  ]);
 
   return { plan_id: planId, schema_hash: hash, impact };
 }

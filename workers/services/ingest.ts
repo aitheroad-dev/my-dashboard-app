@@ -205,11 +205,20 @@ export async function ingestEvents(
         continue;
       }
       const plan = await ingestRecordPlan(env, stream.entity_key, event.data, Date.now() + i);
+      // Event row + record + values + mcp_activity row in ONE batch (GPT audit HIGH:
+      // the unified audit stream must never miss a committed ingest write).
       await env.DB.batch([
         env.DB.prepare(
           "INSERT INTO ingest_events (stream_key, event_uid, record_id, received_at) VALUES (?, ?, ?, ?)",
         ).bind(stream.key, event.event_uid, plan.id, ts),
         ...plan.statements,
+        auditStatement(
+          env,
+          "ingest.event",
+          `${stream.key}:${event.event_uid}`,
+          `ingest:${stream.key}`,
+          `ingest event ${event.event_uid} -> ${stream.entity_key} record ${plan.id}`,
+        ),
       ]);
       accepted++;
       results.push({ event_uid: event.event_uid, status: "accepted", record_id: plan.id });
@@ -233,28 +242,20 @@ export async function ingestEvents(
     }
   }
 
-  // Housekeeping — batched, best-effort: freshness stamp, call-level audit summary
-  // (ingest_events rows are the per-event trail), DLQ retention.
+  // Housekeeping — best-effort ONLY for non-audit state (per-event audit rows commit
+  // atomically above; GPT audit HIGH fold): freshness stamp + DLQ retention.
   try {
-    const statements: D1PreparedStatement[] = [];
-    if (accepted > 0) {
-      statements.push(env.DB.prepare("UPDATE ingest_streams SET last_event_at = ? WHERE key = ?").bind(ts, stream.key));
-    }
-    statements.push(
-      auditStatement(
-        env,
-        "ingest",
-        stream.key,
-        `ingest:${stream.key}`,
-        `ingest ${events.length} event(s): ${accepted} accepted, ${duplicates} duplicate, ${deadLettered} dead-lettered`,
-      ),
+    const statements: D1PreparedStatement[] = [
       env.DB.prepare("DELETE FROM ingest_dead_letters WHERE received_at < datetime('now', ?)").bind(
         `-${DLQ_RETENTION_DAYS} days`,
       ),
-    );
+    ];
+    if (accepted > 0) {
+      statements.push(env.DB.prepare("UPDATE ingest_streams SET last_event_at = ? WHERE key = ?").bind(ts, stream.key));
+    }
     await env.DB.batch(statements);
   } catch {
-    // Summary/housekeeping failure must not fail an ingest that already committed events.
+    // Housekeeping failure must not fail an ingest that already committed events.
   }
 
   return { stream: stream.key, accepted, duplicates, dead_lettered: deadLettered, results };
