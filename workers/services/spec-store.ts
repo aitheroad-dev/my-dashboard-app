@@ -573,6 +573,30 @@ export async function canonicalizeForEntity(
   };
 }
 
+/** W3 ingest seam: canonicalize + unique-check ONE record and return the D1 statements
+ * that would insert it, WITHOUT executing — the ingest endpoint batches these with its
+ * own idempotency row so event + record commit atomically or not at all. */
+export async function ingestRecordPlan(
+  env: AppEnv,
+  entityKey: string,
+  data: Record<string, unknown>,
+  position: number,
+): Promise<{ id: string; statements: D1PreparedStatement[] }> {
+  const resolved = await getEntityByKey(env, entityKey);
+  if (!resolved) throw new Error(`no entity ${entityKey}`);
+  const canonical = canonicalData(resolved.fields, data);
+  await assertUniqueValues(env, resolved.entity.id, resolved.fields, canonical);
+  const id = crypto.randomUUID();
+  const ts = nowIso();
+  const statements = [
+    env.DB.prepare(
+      "INSERT INTO sd_records (id, entity_id, data, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind(id, resolved.entity.id, JSON.stringify(canonical), position, ts, ts),
+    ...recordValueStatements(env, resolved.entity.id, id, resolved.fields, canonical),
+  ];
+  return { id, statements };
+}
+
 const IMPORT_MAX_ROWS = 100;
 const IMPORT_CHUNK = 20;
 

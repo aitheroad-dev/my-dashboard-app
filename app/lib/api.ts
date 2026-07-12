@@ -359,3 +359,71 @@ export function useRequireEnabled(key: PageKey) {
     }
   }, [settings, isLoading, isError, key, navigate]);
 }
+
+// ---- W3 ingest streams (Settings "Data streams" card, recipient doctrine R2) ----
+
+export type IngestStream = {
+  key: string;
+  entity_key: string;
+  enabled: number;
+  created_at: string;
+  last_event_at: string | null;
+  events: number;
+  dead_letters: number;
+};
+export type DeadLetter = {
+  id: number;
+  event_uid: string | null;
+  payload: string;
+  error: string;
+  received_at: string;
+};
+export type SpecEntitySummary = { key: string; singular: string; plural: string };
+
+export function useStreams() {
+  return useQuery({
+    queryKey: ["ingest-streams"],
+    queryFn: () => apiGet<{ streams: IngestStream[] }>("/api/ingest/streams"),
+  });
+}
+
+export function useSpecEntities() {
+  return useQuery({
+    queryKey: ["spec-entities"],
+    queryFn: () => apiGet<SpecEntitySummary[]>("/api/sd/entities"),
+  });
+}
+
+export function useCreateStream() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { key: string; entity_key: string }) =>
+      apiPost<{ key: string; entity_key: string; secret: string }>("/api/ingest/streams", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ingest-streams"] }),
+  });
+}
+
+export function useRotateStream() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) => apiPost<{ key: string; secret: string }>(`/api/ingest/streams/${key}/rotate`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ingest-streams"] }),
+  });
+}
+
+export function useSetStreamEnabled() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { key: string; enabled: boolean }) =>
+      apiPost<{ key: string; enabled: boolean }>(`/api/ingest/streams/${input.key}/enable`, { enabled: input.enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ingest-streams"] }),
+  });
+}
+
+export function useDeadLetters(key: string | null) {
+  return useQuery({
+    queryKey: ["ingest-dlq", key],
+    queryFn: () => apiGet<{ dead_letters: DeadLetter[] }>(`/api/ingest/streams/${key}/dead-letters`),
+    enabled: Boolean(key),
+  });
+}

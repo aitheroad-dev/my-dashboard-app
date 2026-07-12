@@ -6,6 +6,7 @@ import { getViewer } from "./lib/viewer";
 import { verifyBearer } from "./lib/auth";
 import { data } from "./api/data";
 import { spec } from "./api/spec";
+import { ingest } from "./api/ingest";
 import { mcpReadHandler } from "./mcp";
 
 const app = new Hono<{ Bindings: AppEnv }>();
@@ -52,6 +53,10 @@ app.get("/api/me", async (c) => {
 
 // P1 data routes (projects/goals/portfolio/settings). The /api/* migration
 // boot-guard above already ran for these paths; mounted before the SSR catch-all.
+// W3 ingest: machine writes via per-stream keys (edge service token got them here) +
+// owner stream management. Mounted BEFORE the generic data router so /api/ingest/*
+// never falls through; the /api/* middleware above already ran the boot-guard.
+app.route("/api/ingest", ingest);
 app.route("/api", data);
 app.route("/api/sd", spec);
 
