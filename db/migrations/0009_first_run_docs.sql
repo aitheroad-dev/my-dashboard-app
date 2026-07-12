@@ -37,7 +37,7 @@ INSERT OR IGNORE INTO kb_docs (slug, title, blocks, updated_at) VALUES (
     {"type":"paragraph","text":"Add, edit or delete records on any page it created — or bulk-import up to 100 rows from data you paste."},
     {"type":"heading","level":2,"text":"Write documentation"},
     {"type":"paragraph","text":"It can create and update knowledge-base documents like this one."},
-    {"type":"callout","variant":"info","text":"Safety model: the Assistant can never change anything by itself. Writes are proposals; only your explicit approval commits them, and every committed change lands in the activity log."}
+    {"type":"callout","variant":"info","text":"Safety model: the Assistant can never change anything by itself. Writes are proposals — only your explicit approval commits them, and every committed change lands in the activity log."}
   ]}',
   strftime('%Y-%m-%dT%H:%M:%SZ','now')
 );

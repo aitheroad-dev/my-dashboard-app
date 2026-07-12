@@ -301,6 +301,13 @@ function runCommand(label, command, args, options = {}) {
 }
 
 function runBuild() {
+  // Preflight: migrations must split cleanly under the WORKER's boot-guard splitter —
+  // a ';' inside a string literal ships a migration that 500s every DB route on the
+  // fork's next authed load (staging outage, 2026-07-12). Fail the build, not the fleet.
+  const guard = runCommand("check:migrations", nodeBin, [join(repoRoot, "scripts", "check-migrations.mjs")], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!guard.ok) return guard;
   return runCommand("build", "bun", ["run", "build"], { stdio: ["inherit", "inherit", "inherit"] });
 }
 
